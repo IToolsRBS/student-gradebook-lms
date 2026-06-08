@@ -1,0 +1,343 @@
+@import url("https://fonts.googleapis.com/css2?family=Poppins:wght@400;500;600;700&display=swap");
+
+* {
+  box-sizing: border-box;
+}
+
+body {
+  margin: 0;
+  font-family: "Poppins", Arial, sans-serif;
+  background: #d9d9dc;
+  color: #101828;
+}
+
+.container {
+  min-height: 100vh;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 24px;
+}
+
+.time-now {
+  position: fixed;
+  top: 16px;
+  right: 20px;
+  display: flex;
+  border-radius: 10px;
+  overflow: hidden;
+  box-shadow: 0 8px 20px rgba(16, 24, 40, 0.16);
+  font-family: "Poppins", Arial, sans-serif;
+}
+
+.time-date {
+  width: 92px;
+  background: #b12121;
+  color: #ffffff;
+  height: 38px;
+  text-align: center;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 16px;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+}
+
+.time-clock {
+  width: 92px;
+  background: #ffffff;
+  color: #101828;
+  height: 38px;
+  text-align: center;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 16px;
+  font-weight: 600;
+  line-height: 1;
+}
+
+.card {
+  width: 100%;
+  max-width: 520px;
+  background: #f7f7f8;
+  border-radius: 22px;
+  padding: 30px 24px 24px;
+  box-shadow: 0 10px 28px rgba(16, 24, 40, 0.08);
+}
+
+.card-header {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin-bottom: 24px;
+}
+
+.card-header h1 {
+  margin: 0;
+  font-size: 40px;
+  font-weight: 600;
+  line-height: 1.1;
+  letter-spacing: -0.01em;
+}
+
+.app-logo {
+  width: 76px;
+  height: auto;
+}
+
+.filters {
+  background: #ececee;
+  border-radius: 14px;
+  padding: 16px 14px;
+}
+
+.filters label {
+  display: block;
+  margin: 0 0 7px;
+  font-size: 15px;
+  font-weight: 600;
+}
+
+.custom-dropdown {
+  position: relative;
+  margin-bottom: 14px;
+}
+
+.custom-dropdown.disabled .dropdown-trigger {
+  background: #f2f4f7;
+  color: #98a2b3;
+  border-color: #e4e7ec;
+  cursor: not-allowed;
+}
+
+.custom-dropdown.disabled .dropdown-arrow {
+  border-right-color: #98a2b3;
+  border-bottom-color: #98a2b3;
+}
+
+.custom-dropdown.disabled .dropdown-search {
+  display: none !important;
+}
+
+.custom-dropdown:last-child {
+  margin-bottom: 0;
+}
+
+.dropdown-trigger {
+  width: 100%;
+  height: 44px;
+  border: 1px solid #d0d5dd;
+  border-radius: 10px;
+  padding: 0 12px;
+  font-family: "Poppins", Arial, sans-serif;
+  font-size: 16px;
+  font-weight: 500;
+  background: #ffffff;
+  color: #101828;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  cursor: pointer;
+  position: relative;
+  overflow: hidden;
+}
+
+.dropdown-trigger:focus-visible {
+  outline: 2px solid #b12121;
+  outline-offset: 2px;
+}
+
+.dropdown-arrow {
+  width: 10px;
+  height: 10px;
+  border-right: 2px solid #101828;
+  border-bottom: 2px solid #101828;
+  transform: rotate(45deg) translateY(-2px);
+  margin-right: 4px;
+  transition: transform 0.16s ease;
+}
+
+.custom-dropdown.open .dropdown-arrow {
+  transform: rotate(-135deg) translateY(-2px);
+}
+
+.dropdown-menu {
+  position: absolute;
+  left: 0;
+  right: 0;
+  top: calc(100% + 6px);
+  margin: 0;
+  padding: 6px 0;
+  list-style: none;
+  background: #ffffff;
+  border: 1px solid #ead1d1;
+  border-radius: 10px;
+  box-shadow: 0 12px 24px rgba(16, 24, 40, 0.12);
+  display: none;
+  z-index: 50;
+  max-height: 180px;
+  overflow-y: auto;
+}
+
+.custom-dropdown.open .dropdown-menu {
+  display: block;
+}
+
+.custom-dropdown.loading .dropdown-trigger::before {
+  content: "";
+  position: absolute;
+  top: 0;
+  left: -35%;
+  width: 35%;
+  height: 3px;
+  background: #b12121;
+  animation: dropdownLoadingBar 0.9s ease-in-out infinite;
+}
+
+@keyframes dropdownLoadingBar {
+  0% {
+    left: -35%;
+  }
+  100% {
+    left: 100%;
+  }
+}
+
+.dropdown-search {
+  display: none;
+  width: 100%;
+  margin-top: 6px;
+  height: 36px;
+  border: 1px solid #d0d5dd;
+  border-radius: 9px;
+  padding: 0 10px;
+  font-family: "Poppins", Arial, sans-serif;
+  font-size: 14px;
+  color: #101828;
+  background: #ffffff;
+}
+
+.custom-dropdown.open .dropdown-search {
+  display: block;
+}
+
+.dropdown-option {
+  padding: 10px 12px;
+  font-size: 15px;
+  font-weight: 500;
+  color: #101828;
+  cursor: pointer;
+}
+
+.dropdown-option:hover {
+  background: #fdf1f1;
+}
+
+.dropdown-option.selected {
+  background: #b12121;
+  color: #ffffff;
+}
+
+.dropdown-option.loading,
+.dropdown-option.empty {
+  color: #667085;
+  cursor: default;
+  background: #ffffff;
+}
+
+.export-btn {
+  width: 100%;
+  height: 48px;
+  border: none;
+  border-radius: 24px;
+  margin-top: 18px;
+  background: #0f1115;
+  color: #ffffff;
+  font-family: "Poppins", Arial, sans-serif;
+  font-size: 20px;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.export-btn:hover {
+  background: #1c2028;
+}
+
+.export-status {
+  min-height: 20px;
+  margin-top: 10px;
+  font-size: 13px;
+  font-weight: 500;
+  color: #475467;
+  text-align: center;
+}
+
+.export-progress {
+  margin-top: 10px;
+  padding: 10px 12px;
+  border: 1px solid #ead1d1;
+  border-radius: 10px;
+  background: #fff7f7;
+  display: none;
+}
+
+.export-progress.visible {
+  display: block;
+}
+
+.export-progress-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 13px;
+  color: #7a1b1b;
+}
+
+.progress-spinner {
+  width: 14px;
+  height: 14px;
+  border: 2px solid #edc8c8;
+  border-top-color: #b12121;
+  border-radius: 50%;
+  animation: spin 0.9s linear infinite;
+}
+
+.export-progress.done .progress-spinner,
+.export-progress.failed .progress-spinner {
+  animation: none;
+}
+
+.export-progress.failed .progress-spinner {
+  border-color: #fda29b;
+  border-top-color: #f04438;
+}
+
+.progress-elapsed {
+  margin-left: auto;
+  color: #b54708;
+  font-weight: 600;
+}
+
+.progress-track {
+  width: 100%;
+  height: 6px;
+  border-radius: 999px;
+  background: #f2dddd;
+  margin-top: 8px;
+  overflow: hidden;
+}
+
+.progress-fill {
+  width: 0%;
+  height: 100%;
+  background: #b12121;
+  transition: width 0.25s ease;
+}
+
+@keyframes spin {
+  to {
+    transform: rotate(360deg);
+  }
+}

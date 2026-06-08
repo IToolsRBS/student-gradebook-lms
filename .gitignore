@@ -1,0 +1,29 @@
+# OS
+.DS_Store
+
+# Node (if frontend/backend uses JS)
+node_modules/
+dist/
+build/
+
+# Python (if used)
+__pycache__/
+*.pyc
+venv/
+
+# Environment variables
+.env
+.env.txt
+.env.local
+dbt/profiles.yml
+dbt/target/
+dbt/logs/
+dbt/.user.yml
+
+# Excel / exports
+*.xlsx
+!Gradebook template.xlsx
+
+# IDE
+.vscode/
+.idea/l 

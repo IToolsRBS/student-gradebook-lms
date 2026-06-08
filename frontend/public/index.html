@@ -1,0 +1,81 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Gradebook Frontend</title>
+    <link rel="stylesheet" href="/styles.css" />
+  </head>
+  <body>
+    <div class="time-now" id="timeNow">
+      <div class="time-date" id="timeDate">--</div>
+      <div class="time-clock" id="timeClock">--:--</div>
+    </div>
+    <main class="container">
+      <section class="card">
+        <div class="card-header">
+          <img src="/Logo.png" alt="Logo" class="app-logo" />
+          <h1>Export Gradebooks</h1>
+        </div>
+
+        <div class="filters">
+          <label for="categoryDropdownBtn">Category</label>
+          <div class="custom-dropdown" data-dropdown="category">
+            <button
+              id="categoryDropdownBtn"
+              class="dropdown-trigger"
+              type="button"
+              aria-haspopup="listbox"
+              aria-expanded="false"
+            >
+              <span class="dropdown-value">Select category</span>
+              <span class="dropdown-arrow" aria-hidden="true"></span>
+            </button>
+            <input
+              class="dropdown-search"
+              type="text"
+              placeholder="Search category..."
+              aria-label="Search category"
+            />
+            <ul class="dropdown-menu" role="listbox" aria-label="Category options"></ul>
+          </div>
+
+          <label for="programmeDropdownBtn">Programme</label>
+          <div class="custom-dropdown" data-dropdown="programme">
+            <button
+              id="programmeDropdownBtn"
+              class="dropdown-trigger"
+              type="button"
+              aria-haspopup="listbox"
+              aria-expanded="false"
+            >
+              <span class="dropdown-value">Select programme</span>
+              <span class="dropdown-arrow" aria-hidden="true"></span>
+            </button>
+            <input
+              class="dropdown-search"
+              type="text"
+              placeholder="Search programme..."
+              aria-label="Search programme"
+            />
+            <ul class="dropdown-menu" role="listbox" aria-label="Programme options"></ul>
+          </div>
+        </div>
+
+        <button id="exportBtn" class="export-btn" type="button">Export to Excel</button>
+        <div id="exportStatus" class="export-status" aria-live="polite"></div>
+        <div id="exportProgress" class="export-progress" aria-live="polite">
+          <div class="export-progress-head">
+            <span id="progressSpinner" class="progress-spinner" aria-hidden="true"></span>
+            <span id="progressStageText">Waiting to start...</span>
+            <span id="progressElapsed" class="progress-elapsed">00:00</span>
+          </div>
+          <div class="progress-track">
+            <div id="progressFill" class="progress-fill"></div>
+          </div>
+        </div>
+      </section>
+    </main>
+    <script type="module" src="/app.js"></script>
+  </body>
+</html>
