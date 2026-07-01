@@ -42,6 +42,9 @@ export function resolveAuthConfig(readEnvValue) {
   const allowedDomain = (
     readEnvValue(["AZURE_ALLOWED_DOMAIN"]) || ""
   ).toLowerCase();
+  const allowedEmails = parseAllowedEmails(
+    readEnvValue(["AZURE_ALLOWED_EMAILS"])
+  );
   const authPrompt = readEnvValue(["AZURE_AUTH_PROMPT"]) || "select_account";
 
   return {
@@ -54,6 +57,7 @@ export function resolveAuthConfig(readEnvValue) {
     redirectUri: `${baseUrl}/auth/callback`,
     postLogoutRedirectUri: baseUrl,
     allowedDomain,
+    allowedEmails,
     authPrompt
   };
 }
@@ -113,7 +117,21 @@ export function createRequireAuth(config) {
   return function requireAuth(req, res, next) {
     if (!config?.enabled) return next();
     if (isPublicPath(req.path)) return next();
-    if (req.session?.account) return next();
+
+    if (req.session?.account) {
+      if (!emailAllowed(req.session.account.email, config)) {
+        req.session.destroy(() => {});
+        if (req.path.startsWith("/api/")) {
+          return res.status(403).json({
+            error: "Your account is not allowed to access this application."
+          });
+        }
+        return res
+          .status(403)
+          .send("Your account is not allowed to access this application.");
+      }
+      return next();
+    }
 
     if (req.path.startsWith("/api/")) {
       return res.status(401).json({
@@ -127,12 +145,40 @@ export function createRequireAuth(config) {
   };
 }
 
-function accountAllowed(account, allowedDomain) {
-  if (!allowedDomain) return true;
-  const email = String(account?.username || account?.idTokenClaims?.preferred_username || "")
+function parseAllowedEmails(raw) {
+  if (!raw) return new Set();
+  return new Set(
+    String(raw)
+      .split(/[,;]+/)
+      .map((email) => email.trim().toLowerCase())
+      .filter(Boolean)
+  );
+}
+
+function accountEmail(account) {
+  return String(
+    account?.email ||
+      account?.username ||
+      account?.idTokenClaims?.preferred_username ||
+      ""
+  )
     .trim()
     .toLowerCase();
-  return email.endsWith(`@${allowedDomain}`);
+}
+
+function emailAllowed(email, config) {
+  const normalized = String(email || "").trim().toLowerCase();
+  if (!normalized) return false;
+
+  if (config.allowedEmails.size > 0) {
+    return config.allowedEmails.has(normalized);
+  }
+
+  if (config.allowedDomain) {
+    return normalized.endsWith(`@${config.allowedDomain}`);
+  }
+
+  return true;
 }
 
 export function createAuthRouter(config) {
@@ -187,19 +233,17 @@ export function createAuthRouter(config) {
         return res.status(401).send("Microsoft sign-in did not return an account.");
       }
 
-      if (!accountAllowed(tokenResponse.account, config.allowedDomain)) {
+      if (!emailAllowed(accountEmail(tokenResponse.account), config)) {
         req.session.destroy(() => {});
         return res
           .status(403)
           .send("Your account is not allowed to access this application.");
       }
 
+      const email = accountEmail(tokenResponse.account);
       req.session.account = {
         name: tokenResponse.account.name || "",
-        email:
-          tokenResponse.account.username ||
-          tokenResponse.idTokenClaims?.preferred_username ||
-          "",
+        email,
         oid: tokenResponse.account.localAccountId || ""
       };
       delete req.session.auth;
