@@ -139,12 +139,13 @@ def build_workbook_offering_fallback(
 ) -> Path:
     """Excel export for offerings with no gradebook mart rows."""
     from populate_gradebook_from_warehouse import (
+        COURSE_NOTES_SHEET_TITLE,
         MART_SHEET_HEADERS,
         add_header_only_sheet,
         format_cell,
         prettify_sheet,
+        write_gradebook_course_notes,
         write_missed_assessments,
-        write_student_activity,
         write_submission_trends,
         write_upcoming_deadlines,
     )
@@ -244,7 +245,15 @@ def build_workbook_offering_fallback(
 
     _mart_sheet("Missed Assessments", write_missed_assessments, "Missed Assessments")
     _mart_sheet("Upcoming Deadlines", write_upcoming_deadlines, "Upcoming Deadlines")
-    _mart_sheet("Student Activity", write_student_activity, "Student Activity")
+    ws_notes = wb.create_sheet(title=COURSE_NOTES_SHEET_TITLE[:31])
+    write_gradebook_course_notes(
+        ws_notes,
+        conn,
+        schema or "moodle_processed",
+        mart_codes,
+        category_name,
+    )
+    prettify_sheet(ws_notes)
 
     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
     safe_code = display.replace(" ", "_")

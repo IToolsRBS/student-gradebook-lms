@@ -37,7 +37,23 @@ TABLE_TRENDS = "gradebook_submission_trends"
 TABLE_ASSESSMENT = "gradebook_student_assessment_detail"
 TABLE_MISSED = "gradebook_missed_assessments"
 TABLE_UPCOMING = "gradebook_upcoming_deadlines"
-TABLE_ACTIVITY = "gradebook_student_activity"
+TABLE_COURSE_NOTES = "gradebook_course_notes"
+COURSE_NOTES_SHEET_TITLE = "Course Notes"
+COURSE_NOTES_COLUMNS: tuple[str, ...] = (
+    "user_full_name",
+    "username",
+    "course_display_name",
+    "content",
+    "timestamp",
+    "staff_id",
+)
+
+NOTE_FIELD_MAP: list[tuple[str, tuple[str, ...]]] = [
+    ("Latest note", ("latest_note_content",)),
+    ("Note timestamp", ("latest_note_timestamp",)),
+    ("Note created by", ("latest_note_staff_id",)),
+    ("Note course", ("latest_note_course_display_name",)),
+]
 
 # Column headers for mart sheets (used when workbooks need empty placeholder tabs).
 MART_SHEET_HEADERS: dict[str, list[str]] = {
@@ -51,7 +67,7 @@ MART_SHEET_HEADERS: dict[str, list[str]] = {
         "Total Students",
         "Submitted Count",
         "Missed Count",
-        "Late Count",
+        "Late Submissions",
         "Submitted %",
         "Missed %",
         "Late %",
@@ -69,6 +85,10 @@ MART_SHEET_HEADERS: dict[str, list[str]] = {
         "Effective Deadline",
         "Days Overdue",
         "Status",
+        "Latest note",
+        "Note timestamp",
+        "Note created by",
+        "Note course",
     ],
     "Upcoming Deadlines": [
         "Student No",
@@ -83,20 +103,6 @@ MART_SHEET_HEADERS: dict[str, list[str]] = {
         "Effective Deadline",
         "Hours Until Due",
         "Status",
-    ],
-    "Student Activity": [
-        "Student No",
-        "Student",
-        "Email",
-        "Programmes",
-        "Last Moodle Access",
-        "Days Since Moodle Access",
-        "Last Assessment Attempt",
-        "Last Graded At",
-        "Last Grade Submitted At",
-        "Assessments Submitted",
-        "Assessments Passed",
-        "Assessments Failed",
     ],
 }
 
@@ -129,11 +135,7 @@ MART_FILTER: dict[str, dict[str, Any]] = {
         "category_cols": ("category_name",),
     },
     TABLE_UPCOMING: {
-        "programme_cols": ("programme", "program_code"),
-        "category_cols": ("category_name",),
-    },
-    TABLE_ACTIVITY: {
-        "programme_cols": ("programme", "program_code"),
+        "programme_cols": ("programme",),
         "category_cols": ("category_name",),
     },
 }
@@ -149,6 +151,13 @@ def pick(row: dict[str, Any], *keys: str) -> Any:
         value = row.get(key.lower())
         if value is None:
             continue
+        try:
+            import pandas as pd
+
+            if pd.isna(value):
+                continue
+        except (TypeError, ValueError):
+            pass
         if isinstance(value, str) and not value.strip():
             continue
         return value
@@ -333,6 +342,82 @@ def fetch_mart_rows(
     return [normalize_row(dict(r)) for r in df.to_dict("records")]
 
 
+def count_suspended_students(
+    conn: duckdb.DuckDBPyConnection,
+    schema: str,
+    programme_codes: Sequence[str],
+    category_name: str | None,
+) -> int:
+    rows = fetch_mart_rows(
+        conn,
+        schema,
+        TABLE_STUDENT,
+        programme_codes,
+        category_name,
+    )
+    count = 0
+    for raw in rows:
+        status = str(pick(normalize_row(raw), "status")).strip().lower()
+        if status == "suspended":
+            count += 1
+    return count
+
+
+def _course_notes_table_columns(
+    conn: duckdb.DuckDBPyConnection, schema: str
+) -> list[str]:
+    try:
+        relation = qualified_relation(schema, TABLE_COURSE_NOTES)
+        columns = list(conn.execute(f"SELECT * FROM {relation} LIMIT 0").fetchdf().columns)
+        if columns:
+            return [str(col) for col in columns]
+    except Exception:
+        pass
+    return list(COURSE_NOTES_COLUMNS)
+
+
+def fetch_course_note_rows(
+    conn: duckdb.DuckDBPyConnection,
+    schema: str,
+    programme_codes: Sequence[str],
+    category_name: str | None,
+) -> list[dict[str, Any]]:
+    """Course notes for students in the selected category/programme offering."""
+    students = fetch_mart_rows(
+        conn,
+        schema,
+        TABLE_STUDENT,
+        programme_codes,
+        category_name,
+        order_columns=["student_no"],
+    )
+    student_nos = list(
+        {
+            str(pick(normalize_row(row), "student_no")).strip()
+            for row in students
+            if pick(normalize_row(row), "student_no")
+        }
+    )
+    if not student_nos:
+        return []
+
+    try:
+        relation = qualified_relation(schema, TABLE_COURSE_NOTES)
+        placeholders = ", ".join("?" for _ in student_nos)
+        df = conn.execute(
+            f"""
+            SELECT *
+            FROM {relation}
+            WHERE TRIM(CAST(username AS VARCHAR)) IN ({placeholders})
+            ORDER BY timestamp DESC, username, course_display_name
+            """,
+            student_nos,
+        ).fetchdf()
+        return [dict(r) for r in df.to_dict("records")]
+    except Exception:
+        return []
+
+
 def write_programme_summary(
     ws: Worksheet,
     conn: duckdb.DuckDBPyConnection,
@@ -349,8 +434,8 @@ def write_programme_summary(
     metrics: list[tuple[str, tuple[str, ...]]] = [
         ("Programme", ("programme",)),
         ("Students", ("students",)),
+        ("Suspended Students", ("suspended_students", "suspended_student_count")),
         ("Active Modules", ("active_modules",)),
-        ("Assessments", ("assessments",)),
         ("Submitted Assessments", ("submitted_assessments",)),
         ("Missed Assessments", ("missed_assessments",)),
         ("Late Submissions", ("late_submissions",)),
@@ -359,6 +444,10 @@ def write_programme_summary(
     ]
     for label, aliases in metrics:
         value = pick(summary, *aliases)
+        if label == "Suspended Students" and value == "":
+            value = count_suspended_students(
+                conn, schema, programme_codes, category_name
+            )
         if label == "Programme" and not value:
             value = display_programme_code or (programme_codes[0] if programme_codes else "")
         ws.append([label, format_cell(value)])
@@ -377,29 +466,27 @@ def write_student_summary(
         "Email",
         "Programme",
         "Modules",
-        "Missed",
-        "Late",
-        "Upcoming",
-        "Total Assessments",
-        "Submitted Assessments",
-        "Submission Rate %",
+        "Missed Submissions",
+        "Late Submissions",
+        "Upcoming Submissions",
+        "Late %",
         "Last Moodle Access",
         "Days Since Access",
+        *[label for label, _ in NOTE_FIELD_MAP],
     ]
     field_map: list[tuple[str, tuple[str, ...]]] = [
         ("Student No", ("student_no",)),
         ("Student", ("student",)),
         ("Email", ("email",)),
         ("Programme", ("programme",)),
-        ("Modules", ("modules",)),
-        ("Missed", ("missed",)),
-        ("Late", ("late",)),
-        ("Upcoming", ("upcoming",)),
-        ("Total Assessments", ("total_assessments",)),
-        ("Submitted Assessments", ("submitted_assessments",)),
-        ("Submission Rate %", ("submission_rate_pct",)),
+        ("Modules", ("total_modules", "modules")),
+        ("Missed Submissions", ("missed_submissions", "missed")),
+        ("Late Submissions", ("late_submissions", "late")),
+        ("Upcoming Submissions", ("upcoming_submissions", "upcoming")),
+        ("Late %", ("late_rate_pct", "late_pct", "late_submission_rate_pct")),
         ("Last Moodle Access", ("last_moodle_access",)),
         ("Days Since Access", ("days_since_access",)),
+        *NOTE_FIELD_MAP,
     ]
     rows = fetch_mart_rows(
         conn,
@@ -424,10 +511,9 @@ def write_module_summary(
         "Module Code",
         "Module",
         "Students",
-        "Assessments",
         "Submitted",
-        "Missed",
-        "Late",
+        "Missed Submissions",
+        "Late Submissions",
         "Upcoming",
         "Submission Rate %",
         "Missed Rate %",
@@ -438,14 +524,13 @@ def write_module_summary(
         ("Module Code", ("module_code",)),
         ("Module", ("module",)),
         ("Students", ("students",)),
-        ("Assessments", ("assessments",)),
-        ("Submitted", ("submitted",)),
-        ("Missed", ("missed",)),
-        ("Late", ("late",)),
-        ("Upcoming", ("upcoming",)),
+        ("Submitted", ("total_submissions", "submitted")),
+        ("Missed Submissions", ("missed_submissions", "missed")),
+        ("Late Submissions", ("late_submissions", "late")),
+        ("Upcoming", ("upcoming_assessments", "upcoming")),
         ("Submission Rate %", ("submission_rate_pct",)),
         ("Missed Rate %", ("missed_rate_pct",)),
-        ("Late Rate %", ("late_rate_pct",)),
+        ("Late Rate %", ("late_rate_pct", "late_pct")),
     ]
     rows = fetch_mart_rows(
         conn,
@@ -475,7 +560,7 @@ def write_submission_trends(
         "Total Students",
         "Submitted Count",
         "Missed Count",
-        "Late Count",
+        "Late Submissions",
         "Submitted %",
         "Missed %",
         "Late %",
@@ -486,14 +571,14 @@ def write_submission_trends(
         ("Module", ("module",)),
         ("Assessment", ("assessment",)),
         ("Assessment Type", ("assessment_type",)),
-        ("Due Date", ("due_date",)),
+        ("Due Date", ("effective_deadline_at", "due_date")),
         ("Total Students", ("total_students",)),
         ("Submitted Count", ("submitted_count",)),
         ("Missed Count", ("missed_count",)),
-        ("Late Count", ("late_count",)),
+        ("Late Submissions", ("late_count", "late_submissions")),
         ("Submitted %", ("submitted_pct",)),
         ("Missed %", ("missed_pct",)),
-        ("Late %", ("late_pct",)),
+        ("Late %", ("late_pct", "late_rate_pct")),
     ]
     rows = fetch_mart_rows(
         conn,
@@ -529,7 +614,7 @@ def write_student_assessment_detail(
         "Mark",
         "Max Grade",
         "Grade %",
-        "Passed",
+        *[label for label, _ in NOTE_FIELD_MAP],
     ]
     rows = fetch_mart_rows(
         conn,
@@ -568,7 +653,7 @@ def write_student_assessment_detail(
                 format_cell(pick(row, "grade_raw")),
                 format_cell(pick(row, "max_grade")),
                 format_cell(pick(row, "grade_pct")),
-                format_cell(pick(row, "passed")),
+                *[format_cell(pick(row, *aliases)) for _, aliases in NOTE_FIELD_MAP],
             ]
         )
 
@@ -593,6 +678,7 @@ def write_missed_assessments(
         "Effective Deadline",
         "Days Overdue",
         "Status",
+        *[label for label, _ in NOTE_FIELD_MAP],
     ]
     field_map = [
         ("Student No", ("student_no",)),
@@ -603,10 +689,11 @@ def write_missed_assessments(
         ("Module", ("module",)),
         ("Assessment", ("assessment",)),
         ("Assessment Type", ("assessment_type",)),
-        ("Due Date", ("due_date",)),
-        ("Effective Deadline", ("effective_deadline_at",)),
+        ("Due Date", ("due_date", "effective_deadline_at")),
+        ("Effective Deadline", ("effective_deadline_at", "due_date")),
         ("Days Overdue", ("days_overdue",)),
         ("Status", ("status",)),
+        *NOTE_FIELD_MAP,
     ]
     rows = fetch_mart_rows(
         conn,
@@ -617,6 +704,22 @@ def write_missed_assessments(
         order_columns=["days_overdue", "student_no"],
     )
     write_mapped_rows(ws, rows, headers, field_map)
+
+
+def write_gradebook_course_notes(
+    ws: Worksheet,
+    conn: duckdb.DuckDBPyConnection,
+    schema: str,
+    programme_codes: Sequence[str],
+    category_name: str | None,
+) -> None:
+    columns = _course_notes_table_columns(conn, schema)
+    rows = fetch_course_note_rows(
+        conn, schema, programme_codes, category_name
+    )
+    write_headers(ws, columns)
+    for raw in rows:
+        ws.append([format_cell(raw.get(col)) for col in columns])
 
 
 def write_upcoming_deadlines(
@@ -660,53 +763,7 @@ def write_upcoming_deadlines(
         TABLE_UPCOMING,
         programme_codes,
         category_name,
-        order_columns=["hours_until_due", "due_date"],
-    )
-    write_mapped_rows(ws, rows, headers, field_map)
-
-
-def write_student_activity(
-    ws: Worksheet,
-    conn: duckdb.DuckDBPyConnection,
-    schema: str,
-    programme_codes: Sequence[str],
-    category_name: str | None,
-) -> None:
-    headers = [
-        "Student No",
-        "Student",
-        "Email",
-        "Programmes",
-        "Last Moodle Access",
-        "Days Since Moodle Access",
-        "Last Assessment Attempt",
-        "Last Graded At",
-        "Last Grade Submitted At",
-        "Assessments Submitted",
-        "Assessments Passed",
-        "Assessments Failed",
-    ]
-    field_map = [
-        ("Student No", ("student_no",)),
-        ("Student", ("student",)),
-        ("Email", ("email",)),
-        ("Programmes", ("programme", "program_code", "programs")),
-        ("Last Moodle Access", ("last_moodle_access",)),
-        ("Days Since Moodle Access", ("days_since_moodle_access",)),
-        ("Last Assessment Attempt", ("last_assessment_attempt",)),
-        ("Last Graded At", ("last_graded_at",)),
-        ("Last Grade Submitted At", ("last_grade_submitted_at",)),
-        ("Assessments Submitted", ("assessments_submitted",)),
-        ("Assessments Passed", ("assessments_passed",)),
-        ("Assessments Failed", ("assessments_failed",)),
-    ]
-    rows = fetch_mart_rows(
-        conn,
-        schema,
-        TABLE_ACTIVITY,
-        programme_codes,
-        category_name,
-        order_columns=["student_no"],
+        order_columns=["hours_until_due", "effective_deadline_at"],
     )
     write_mapped_rows(ws, rows, headers, field_map)
 
@@ -757,17 +814,20 @@ def offering_has_gradebook_rows(
         (TABLE_ASSESSMENT, ("user_idnumber",)),
         (TABLE_MISSED, ("student_no",)),
         (TABLE_UPCOMING, ("student_no",)),
-        (TABLE_ACTIVITY, ("student_no",)),
+        (TABLE_COURSE_NOTES, None),
     )
     for table, order_columns in probes:
-        rows = fetch_mart_rows(
-            conn,
-            schema,
-            table,
-            codes,
-            category_name,
-            order_columns=order_columns,
-        )
+        if table == TABLE_COURSE_NOTES:
+            rows = fetch_course_note_rows(conn, schema, codes, category_name)
+        else:
+            rows = fetch_mart_rows(
+                conn,
+                schema,
+                table,
+                codes,
+                category_name,
+                order_columns=order_columns,
+            )
         if rows:
             return True
     return False
@@ -817,7 +877,7 @@ def build_workbook(
         ("Student Assessment Detail", write_student_assessment_detail),
         ("Missed Assessments", write_missed_assessments),
         ("Upcoming Deadlines", write_upcoming_deadlines),
-        ("Student Activity", write_student_activity),
+        (COURSE_NOTES_SHEET_TITLE, write_gradebook_course_notes),
     ]
 
     for title, writer in sheets:
@@ -833,6 +893,13 @@ def build_workbook(
             )
         else:
             writer(ws, conn, schema, export_codes, category_name)
+        prettify_sheet(ws)
+
+    if COURSE_NOTES_SHEET_TITLE[:31] not in wb.sheetnames:
+        ws = wb.create_sheet(title=COURSE_NOTES_SHEET_TITLE[:31])
+        write_gradebook_course_notes(
+            ws, conn, schema, export_codes, category_name
+        )
         prettify_sheet(ws)
 
     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")

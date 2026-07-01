@@ -1,0 +1,30 @@
+# Render Blueprint — https://render.com/docs/blueprint-spec
+# Connect this repo, then set MOTHERDUCK_TOKEN in the Render dashboard (Environment).
+services:
+  - type: web
+    name: gradebook-export
+    runtime: docker
+    dockerfilePath: ./Dockerfile
+    dockerContext: .
+    plan: starter
+    numInstances: 1
+    healthCheckPath: /api/health
+    envVars:
+      - key: NODE_ENV
+        value: production
+      - key: HOST
+        value: 0.0.0.0
+      - key: PYTHON_BIN
+        value: python3
+      - key: EXPORT_OUTPUT_DIR
+        value: /tmp/gradebook-exports
+      - key: MOTHERDUCK_DATABASE
+        value: regent_data_platform_prod
+      - key: WAREHOUSE_STAGING_SCHEMA
+        value: moodle_staging
+      - key: WAREHOUSE_DIM_SCHEMA
+        value: moodle_processed
+      - key: WAREHOUSE_GRADEBOOK_SCHEMA
+        value: moodle_processed
+      - key: MOTHERDUCK_TOKEN
+        sync: false

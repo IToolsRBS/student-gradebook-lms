@@ -1,0 +1,12 @@
+student_risk:
+  target: dev
+  outputs:
+    dev:
+      type: postgres
+      host: ep-lively-smoke-amgevd5i-pooler.c-5.us-east-1.aws.neon.tech
+      user: neondb_owner
+      password: npg_7snPyS3xOTCD
+      port: 5432
+      dbname: Student Support Grades System
+      schema: analytics
+      threads: 4

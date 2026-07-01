@@ -1,6 +1,7 @@
 import express from "express";
 import path from "path";
 import fs from "fs";
+import os from "os";
 import { fileURLToPath } from "url";
 import { spawn } from "child_process";
 
@@ -112,6 +113,16 @@ function readEnvValue(keys) {
   return null;
 }
 
+const exportOutputDir =
+  readEnvValue(["EXPORT_OUTPUT_DIR"]) ||
+  path.join(os.tmpdir(), "gradebook-exports");
+fs.mkdirSync(exportOutputDir, { recursive: true });
+
+const pythonBin =
+  readEnvValue(["PYTHON_BIN"]) ||
+  (process.platform === "win32" ? "python" : "python3");
+const host = readEnvValue(["HOST"]) || "0.0.0.0";
+
 function motherduckEnv() {
   return {
     MOTHERDUCK_TOKEN: motherduckToken
@@ -193,7 +204,7 @@ function runProcess(command, args, cwd, extraEnv = {}, options = {}) {
 
 async function runWarehouseList(command, extraArgs = []) {
   const result = await runProcess(
-    "python",
+    pythonBin,
     ["warehouse_list.py", command, ...extraArgs],
     projectRoot,
     motherduckEnv()
@@ -226,6 +237,26 @@ function updateJob(jobId, patch) {
   const current = exportJobs.get(jobId);
   if (!current) return;
   exportJobs.set(jobId, { ...current, ...patch, updatedAt: Date.now() });
+}
+
+async function readFileWithRetry(filePath, maxAttempts = 6, baseDelayMs = 400) {
+  let lastError = null;
+  for (let attempt = 1; attempt <= maxAttempts; attempt++) {
+    try {
+      return await fs.promises.readFile(filePath);
+    } catch (error) {
+      lastError = error;
+      const retryable =
+        error?.code === "EBUSY" ||
+        error?.code === "EPERM" ||
+        error?.code === "EACCES";
+      if (!retryable || attempt === maxAttempts) break;
+      await new Promise((resolve) =>
+        setTimeout(resolve, baseDelayMs * attempt)
+      );
+    }
+  }
+  throw lastError;
 }
 
 app.use(express.static(path.join(__dirname, "public")));
@@ -337,7 +368,7 @@ app.post("/api/export-excel/start", async (req, res) => {
       });
 
       const exportResult = await runProcess(
-        "python",
+        pythonBin,
         [
           "populate_gradebook_from_warehouse.py",
           "--programme-code",
@@ -347,7 +378,7 @@ app.post("/api/export-excel/start", async (req, res) => {
           "--warehouse-schema",
           warehouseSchema,
           "--output-dir",
-          projectRoot
+          exportOutputDir
         ],
         projectRoot,
         motherduckEnv(),
@@ -415,25 +446,47 @@ app.get("/api/export-excel/jobs/:jobId", (req, res) => {
   res.json(job);
 });
 
-app.get("/api/export-excel/jobs/:jobId/download", (req, res) => {
-  const job = exportJobs.get(String(req.params.jobId || ""));
+app.get("/api/export-excel/jobs/:jobId/download", async (req, res) => {
+  const jobId = String(req.params.jobId || "");
+  const job = exportJobs.get(jobId);
   if (!job) {
     return res.status(404).json({ error: "Job not found" });
   }
   if (job.status !== "done" || !job.filePath || !fs.existsSync(job.filePath)) {
     return res.status(409).json({ error: "Export not ready for download" });
   }
-  res.setHeader("x-export-ms", String(job.timingsMs?.excel || ""));
-  res.setHeader("x-total-ms", String(job.timingsMs?.total || ""));
-  res.download(job.filePath, job.fileName || path.basename(job.filePath));
+  const fileName = job.fileName || path.basename(job.filePath);
+  try {
+    const data = await readFileWithRetry(job.filePath);
+    res.setHeader("x-export-ms", String(job.timingsMs?.excel || ""));
+    res.setHeader("x-total-ms", String(job.timingsMs?.total || ""));
+    res.setHeader(
+      "Content-Type",
+      "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+    );
+    res.setHeader(
+      "Content-Disposition",
+      `attachment; filename="${fileName.replace(/"/g, "")}"`
+    );
+    res.send(data);
+  } catch (error) {
+    console.error(`[export-download:${jobId}]`, error);
+    res.status(503).json({
+      error:
+        error?.code === "EBUSY"
+          ? "Export file is temporarily locked. Please try again in a few seconds."
+          : `Could not read export file: ${error?.message || error}`
+    });
+  }
 });
 
 app.get("*", (_req, res) => {
   res.sendFile(path.join(__dirname, "public", "index.html"));
 });
 
-app.listen(port, () => {
-  console.log(`Gradebook export UI at http://localhost:${port}`);
+app.listen(port, host, () => {
+  console.log(`Gradebook export UI listening on ${host}:${port}`);
+  console.log(`Python runtime: ${pythonBin}`);
   if (loadedEnvFiles.length) {
     console.log(`Env file(s): ${loadedEnvFiles.join(", ")}`);
   } else {

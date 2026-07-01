@@ -334,8 +334,14 @@ exportBtn?.addEventListener("click", async () => {
       `/api/export-excel/jobs/${encodeURIComponent(jobId)}/download`
     );
     if (!downloadResponse.ok) {
-      const payload = await downloadResponse.json();
-      throw new Error(payload?.error || "Download failed");
+      let message = "Download failed";
+      try {
+        const payload = await downloadResponse.json();
+        message = payload?.error || message;
+      } catch {
+        message = `${message} (HTTP ${downloadResponse.status})`;
+      }
+      throw new Error(message);
     }
     const blob = await downloadResponse.blob();
     const exportMs = downloadResponse.headers.get("x-export-ms");

@@ -1,0 +1,37 @@
+# Git and IDE
+.git
+.gitignore
+.cursor
+.vscode
+.idea
+
+# Secrets (set on Render)
+.env
+.env.*
+!.env.example
+
+# Dependencies (installed in image)
+frontend/node_modules
+node_modules
+venv
+__pycache__
+*.pyc
+
+# Local exports and samples
+*.xlsx
+exports
+
+# Legacy / not needed at runtime
+backend
+dbt
+scripts
+main_programme_loader_optimized.py
+warehouse_debug.py
+schema.sql
+openapi.main_programme_loader.yaml
+LOCAL_RUN_SETUP.md
+
+# Build artifacts
+target
+dist
+build

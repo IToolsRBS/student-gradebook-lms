@@ -5,7 +5,8 @@
   "type": "module",
   "scripts": {
     "start": "node server.js",
-    "dev": "node server.js"
+    "dev": "node server.js",
+    "sync:gradebook": "powershell -ExecutionPolicy Bypass -File ../scripts/sync-gradebook-copy.ps1"
   },
   "dependencies": {
     "express": "^4.21.2"
