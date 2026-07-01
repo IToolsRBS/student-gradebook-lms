@@ -28,3 +28,15 @@ services:
         value: moodle_processed
       - key: MOTHERDUCK_TOKEN
         sync: false
+      - key: AZURE_CLIENT_ID
+        sync: false
+      - key: AZURE_CLIENT_SECRET
+        sync: false
+      - key: AZURE_TENANT_ID
+        sync: false
+      - key: SESSION_SECRET
+        sync: false
+      - key: AZURE_ALLOWED_DOMAIN
+        value: regent.ac.za
+      - key: AZURE_AUTH_ENABLED
+        value: "true"

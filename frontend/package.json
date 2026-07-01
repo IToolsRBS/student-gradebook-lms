@@ -9,6 +9,8 @@
     "sync:gradebook": "powershell -ExecutionPolicy Bypass -File ../scripts/sync-gradebook-copy.ps1"
   },
   "dependencies": {
-    "express": "^4.21.2"
+    "@azure/msal-node": "^2.16.2",
+    "express": "^4.21.2",
+    "express-session": "^1.18.1"
   }
 }

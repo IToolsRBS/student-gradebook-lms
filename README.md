@@ -20,3 +20,17 @@ See [LOCAL_RUN_SETUP.md](LOCAL_RUN_SETUP.md).
 4. Open the service URL → `/api/health` should return `{"ok":true,...}`.
 
 Or **New → Web Service → Docker**, point at this repo, and set the same env vars from `.env.example`.
+
+### Microsoft sign-in (production)
+
+Auth is **required** when `NODE_ENV=production`. Register an app in [Microsoft Entra ID](https://entra.microsoft.com):
+
+1. **App registrations** → New registration → Web redirect URI:  
+   `https://<your-render-url>/auth/callback`
+2. Create a **client secret** under Certificates & secrets.
+3. Set on Render:
+   - `AZURE_CLIENT_ID`, `AZURE_CLIENT_SECRET`, `AZURE_TENANT_ID`
+   - `SESSION_SECRET` (random 32+ character string)
+   - `AZURE_ALLOWED_DOMAIN=regent.ac.za` (optional, restricts to org emails)
+
+`BASE_URL` is optional on Render — `RENDER_EXTERNAL_URL` is used automatically.

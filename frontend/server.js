@@ -4,6 +4,12 @@ import fs from "fs";
 import os from "os";
 import { fileURLToPath } from "url";
 import { spawn } from "child_process";
+import {
+  createAuthRouter,
+  createRequireAuth,
+  createSessionMiddleware,
+  resolveAuthConfig
+} from "./auth.js";
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -122,6 +128,18 @@ const pythonBin =
   readEnvValue(["PYTHON_BIN"]) ||
   (process.platform === "win32" ? "python" : "python3");
 const host = readEnvValue(["HOST"]) || "0.0.0.0";
+
+let authConfig = { enabled: false };
+try {
+  authConfig = resolveAuthConfig(readEnvValue);
+} catch (error) {
+  console.error(`Microsoft sign-in config error: ${error.message}`);
+  process.exit(1);
+}
+
+if (authConfig.enabled) {
+  app.set("trust proxy", 1);
+}
 
 function motherduckEnv() {
   return {
@@ -259,9 +277,16 @@ async function readFileWithRetry(filePath, maxAttempts = 6, baseDelayMs = 400) {
   throw lastError;
 }
 
+app.use(express.json());
+
+if (authConfig.enabled) {
+  app.use(createSessionMiddleware(authConfig));
+  app.use("/auth", createAuthRouter(authConfig));
+  app.use(createRequireAuth(authConfig));
+}
+
 app.use(express.static(path.join(__dirname, "public")));
 app.use(express.static(__dirname));
-app.use(express.json());
 
 app.get("/api/health", (_req, res) => {
   res.json({
@@ -269,7 +294,8 @@ app.get("/api/health", (_req, res) => {
     service: "gradebook-export",
     warehouse: Boolean(motherduckToken),
     database: motherduckDatabase,
-    dropdownSource: "motherduck"
+    dropdownSource: "motherduck",
+    auth: authConfig.enabled ? "microsoft" : "disabled"
   });
 });
 
@@ -500,6 +526,14 @@ app.listen(port, host, () => {
     console.log(`MotherDuck database: md:${motherduckDatabase}`);
     console.log(
       `Schemas: staging=${stagingSchema}, dim=${dimSchema}, gradebook=${warehouseSchema}`
+    );
+  }
+  if (authConfig.enabled) {
+    console.log(`Microsoft sign-in enabled (tenant ${authConfig.tenantId})`);
+    console.log(`Auth redirect URI: ${authConfig.redirectUri}`);
+  } else {
+    console.warn(
+      "Microsoft sign-in disabled — set AZURE_CLIENT_ID and related env vars to enable."
     );
   }
 });

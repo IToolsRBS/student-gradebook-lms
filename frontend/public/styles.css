@@ -30,6 +30,35 @@ body {
   font-family: "Poppins", Arial, sans-serif;
 }
 
+.user-bar {
+  position: fixed;
+  top: 16px;
+  left: 20px;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 8px 14px;
+  border-radius: 10px;
+  background: #ffffff;
+  box-shadow: 0 8px 20px rgba(16, 24, 40, 0.16);
+  font-size: 14px;
+}
+
+.user-name {
+  font-weight: 500;
+  color: #101828;
+}
+
+.logout-link {
+  color: #b12121;
+  text-decoration: none;
+  font-weight: 600;
+}
+
+.logout-link:hover {
+  text-decoration: underline;
+}
+
 .time-date {
   width: 92px;
   background: #b12121;

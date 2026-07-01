@@ -146,12 +146,34 @@ function initCustomDropdown(dropdownEl, placeholder) {
 }
 
 async function fetchJson(url) {
-  const response = await fetch(url);
+  const response = await fetch(url, { credentials: "same-origin" });
+  if (response.status === 401) {
+    window.location.href = "/auth/login";
+    throw new Error("Sign in required");
+  }
   const payload = await response.json();
   if (!response.ok) {
     throw new Error(payload?.error || `Request failed: ${response.status}`);
   }
   return payload;
+}
+
+async function loadSignedInUser() {
+  const userBar = document.getElementById("userBar");
+  const userNameEl = document.getElementById("userName");
+  if (!userBar || !userNameEl) return;
+
+  try {
+    const response = await fetch("/auth/me", { credentials: "same-origin" });
+    if (!response.ok) return;
+    const payload = await response.json();
+    if (!payload?.authenticated || !payload?.user) return;
+    const label = payload.user.name || payload.user.email || "Signed in";
+    userNameEl.textContent = label;
+    userBar.hidden = false;
+  } catch {
+    // Auth may be disabled in local development.
+  }
 }
 
 function formatElapsed(ms) {
@@ -242,6 +264,7 @@ function renderTime() {
 
 renderTime();
 setInterval(renderTime, 1000);
+loadSignedInUser();
 
 const categoryDropdownEl = document.querySelector('[data-dropdown="category"]');
 const programmeDropdownEl = document.querySelector('[data-dropdown="programme"]');
@@ -289,6 +312,7 @@ exportBtn?.addEventListener("click", async () => {
     const startResponse = await fetch("/api/export-excel/start", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
+      credentials: "same-origin",
       body: JSON.stringify({
         categoryName,
         programmeCode
@@ -303,7 +327,8 @@ exportBtn?.addEventListener("click", async () => {
     let latestJob = null;
     while (true) {
       const pollResponse = await fetch(
-        `/api/export-excel/jobs/${encodeURIComponent(jobId)}`
+        `/api/export-excel/jobs/${encodeURIComponent(jobId)}`,
+        { credentials: "same-origin" }
       );
       const job = await pollResponse.json();
       if (!pollResponse.ok) {
@@ -331,7 +356,8 @@ exportBtn?.addEventListener("click", async () => {
     exportBtn.textContent = "Downloading...";
     if (exportStatusEl) exportStatusEl.textContent = "Downloading Excel...";
     const downloadResponse = await fetch(
-      `/api/export-excel/jobs/${encodeURIComponent(jobId)}/download`
+      `/api/export-excel/jobs/${encodeURIComponent(jobId)}/download`,
+      { credentials: "same-origin" }
     );
     if (!downloadResponse.ok) {
       let message = "Download failed";
