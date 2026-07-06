@@ -90,18 +90,13 @@ MART_SHEET_HEADERS: dict[str, list[str]] = {
         "Note course",
     ],
     "Upcoming Deadlines": [
-        "Student No",
-        "Student",
-        "Email",
         "Programme",
         "Module Code",
         "Module",
         "Assessment",
         "Assessment Type",
-        "Due Date",
         "Effective Deadline",
         "Hours Until Due",
-        "Status",
     ],
 }
 
@@ -251,6 +246,28 @@ def format_cell(value: Any) -> Any:
     return value
 
 
+def format_percent_cell(value: Any) -> Any:
+    """Format mart rate fields stored as decimals (e.g. 0.45) as percentages (45%)."""
+    if value is None or value == "":
+        return ""
+    try:
+        import pandas as pd
+
+        if pd.isna(value):
+            return ""
+    except (TypeError, ValueError):
+        pass
+    try:
+        number = float(value)
+    except (TypeError, ValueError):
+        return format_cell(value)
+    if abs(number) <= 1:
+        number *= 100
+    if abs(number - round(number)) < 0.05:
+        return f"{int(round(number))}%"
+    return f"{number:.1f}%"
+
+
 def prettify_sheet(ws: Worksheet) -> None:
     if ws.max_row < 1 or ws.max_column < 1:
         return
@@ -290,13 +307,19 @@ def write_mapped_rows(
     rows: Iterable[dict[str, Any]],
     headers: Sequence[str],
     field_map: Sequence[tuple[str, tuple[str, ...]]],
+    percent_labels: frozenset[str] | None = None,
 ) -> None:
     write_headers(ws, headers)
     for raw in rows:
         row = normalize_row(raw)
-        ws.append(
-            [format_cell(pick(row, *aliases)) for _, aliases in field_map]
-        )
+        values: list[Any] = []
+        for label, aliases in field_map:
+            raw_value = pick(row, *aliases)
+            if percent_labels and label in percent_labels:
+                values.append(format_percent_cell(raw_value))
+            else:
+                values.append(format_cell(raw_value))
+        ws.append(values)
 
 
 def fetch_mart_rows(
@@ -493,12 +516,12 @@ def write_student_summary(
         "Student No",
         "Student",
         "Email",
+        "Status",
         "Programme",
         "Modules",
         "Missed Submissions",
         "Late Submissions",
         "Upcoming Submissions",
-        "Late %",
         "Last Moodle Access",
         "Days Since Access",
         *[label for label, _ in NOTE_FIELD_MAP],
@@ -507,12 +530,12 @@ def write_student_summary(
         ("Student No", ("student_no",)),
         ("Student", ("student",)),
         ("Email", ("email",)),
+        ("Status", ("status",)),
         ("Programme", ("programme",)),
         ("Modules", ("total_modules", "modules")),
         ("Missed Submissions", ("missed_submissions", "missed")),
         ("Late Submissions", ("late_submissions", "late")),
         ("Upcoming Submissions", ("upcoming_submissions", "upcoming")),
-        ("Late %", ("late_rate_pct", "late_pct", "late_submission_rate_pct")),
         ("Last Moodle Access", ("last_moodle_access",)),
         ("Days Since Access", ("days_since_access",)),
         *NOTE_FIELD_MAP,
@@ -569,7 +592,15 @@ def write_module_summary(
         category_name,
         order_columns=["module_code", "module"],
     )
-    write_mapped_rows(ws, rows, headers, field_map)
+    write_mapped_rows(
+        ws,
+        rows,
+        headers,
+        field_map,
+        percent_labels=frozenset(
+            {"Submission Rate %", "Missed Rate %", "Late Rate %"}
+        ),
+    )
 
 
 def write_submission_trends(
@@ -617,7 +648,13 @@ def write_submission_trends(
         category_name,
         order_columns=["module_code", "assessment"],
     )
-    write_mapped_rows(ws, rows, headers, field_map)
+    write_mapped_rows(
+        ws,
+        rows,
+        headers,
+        field_map,
+        percent_labels=frozenset({"Submitted %", "Missed %", "Late %"}),
+    )
 
 
 def write_student_assessment_detail(
@@ -638,11 +675,9 @@ def write_student_assessment_detail(
         "Assessment Type",
         "Due Date",
         "Submitted Date",
-        "Days Late",
         "Status",
         "Mark",
         "Max Grade",
-        "Grade %",
         *[label for label, _ in NOTE_FIELD_MAP],
     ]
     rows = fetch_mart_rows(
@@ -677,11 +712,9 @@ def write_student_assessment_detail(
                 format_cell(pick(row, "assessment_type")),
                 format_cell(pick(row, "due_at", "effective_deadline_at")),
                 format_cell(submitted),
-                format_cell(pick(row, "days_late")),
                 format_cell(pick(row, "status")),
                 format_cell(pick(row, "grade_raw")),
                 format_cell(pick(row, "max_grade")),
-                format_cell(pick(row, "grade_pct")),
                 *[format_cell(pick(row, *aliases)) for _, aliases in NOTE_FIELD_MAP],
             ]
         )
@@ -759,32 +792,22 @@ def write_upcoming_deadlines(
     category_name: str | None,
 ) -> None:
     headers = [
-        "Student No",
-        "Student",
-        "Email",
         "Programme",
         "Module Code",
         "Module",
         "Assessment",
         "Assessment Type",
-        "Due Date",
         "Effective Deadline",
         "Hours Until Due",
-        "Status",
     ]
     field_map = [
-        ("Student No", ("student_no",)),
-        ("Student", ("student",)),
-        ("Email", ("email",)),
         ("Programme", ("programme",)),
         ("Module Code", ("module_code",)),
         ("Module", ("module",)),
         ("Assessment", ("assessment",)),
         ("Assessment Type", ("assessment_type",)),
-        ("Due Date", ("due_date",)),
         ("Effective Deadline", ("effective_deadline_at",)),
         ("Hours Until Due", ("hours_until_due",)),
-        ("Status", ("status",)),
     ]
     rows = fetch_mart_rows(
         conn,
