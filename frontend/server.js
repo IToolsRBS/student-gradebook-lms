@@ -412,10 +412,17 @@ app.post("/api/export-excel/start", async (req, res) => {
       );
 
       if (exportResult.code !== 0) {
+        const logTail = exportResult.output
+          .split(/\r?\n/)
+          .map((line) => line.trim())
+          .filter(Boolean)
+          .slice(-8)
+          .join("\n");
         return updateJob(jobId, {
           status: "failed",
           stage: "excel",
           message: "Excel export failed",
+          error: logTail || "Excel export failed",
           logs: exportResult.output
         });
       }

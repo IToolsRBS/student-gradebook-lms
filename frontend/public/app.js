@@ -344,7 +344,8 @@ exportBtn?.addEventListener("click", async () => {
 
       if (job?.status === "done") break;
       if (job?.status === "failed") {
-        throw new Error(job?.error || job?.message || "Export job failed");
+        const detail = job?.error || job?.logs || job?.message || "Export job failed";
+        throw new Error(detail);
       }
       await new Promise((resolve) => setTimeout(resolve, 1500));
     }

@@ -126,7 +126,8 @@ MART_FILTER: dict[str, dict[str, Any]] = {
         "category_cols": ("category_name",),
     },
     TABLE_ASSESSMENT: {
-        "programme_cols": ("programme", "program_code"),
+        # programme when present; else course_prefix (not program_code — that is canonical).
+        "programme_cols": ("programme", "course_prefix"),
         "category_cols": ("category_name",),
     },
     TABLE_MISSED: {
@@ -138,6 +139,25 @@ MART_FILTER: dict[str, dict[str, Any]] = {
         "category_cols": ("category_name",),
     },
 }
+
+
+def _mart_columns(
+    conn: duckdb.DuckDBPyConnection, schema: str, table: str
+) -> dict[str, str]:
+    """Lowercase column name -> actual mart column name."""
+    relation = qualified_relation(schema, table)
+    df = conn.execute(f"SELECT * FROM {relation} LIMIT 0").fetchdf()
+    return {str(col).lower(): str(col) for col in df.columns}
+
+
+def _pick_first_mart_column(
+    mart_cols: dict[str, str], candidates: Sequence[str]
+) -> str | None:
+    for candidate in candidates:
+        actual = mart_cols.get(str(candidate).lower())
+        if actual:
+            return actual
+    return None
 
 
 def normalize_row(row: dict[str, Any]) -> dict[str, Any]:
@@ -297,39 +317,49 @@ def fetch_mart_rows(
         return []
 
     spec = MART_FILTER.get(table, {"programme_cols": ("programme",), "category_cols": ()})
-    programme_cols: tuple[str, ...] = tuple(spec.get("programme_cols", ("programme",)))
-    category_cols: tuple[str, ...] = tuple(spec.get("category_cols", ()))
+    programme_candidates: tuple[str, ...] = tuple(
+        spec.get("programme_cols", ("programme",))
+    )
+    category_candidates: tuple[str, ...] = tuple(spec.get("category_cols", ()))
     programme_ilike: bool = bool(spec.get("programme_ilike"))
     programme_array: bool = bool(spec.get("programme_array"))
 
     relation = qualified_relation(schema, table)
+    try:
+        mart_cols = _mart_columns(conn, schema, table)
+    except duckdb.CatalogException:
+        return []
+    programme_col = _pick_first_mart_column(mart_cols, programme_candidates)
+    if not programme_col:
+        return []
+
     where_parts: list[str] = []
     params: list[Any] = []
 
-    for col in programme_cols:
-        for programme_code in codes:
-            if programme_array:
-                where_parts.append(
-                    f'EXISTS (SELECT 1 FROM unnest("{col}") AS _md_prog(prog) '
-                    f'WHERE UPPER(TRIM(CAST(_md_prog.prog AS VARCHAR))) = UPPER(TRIM(?)))'
-                )
-                params.append(programme_code)
-            elif programme_ilike:
-                where_parts.append(f'CAST("{col}" AS VARCHAR) ILIKE ?')
-                params.append(f"%{programme_code}%")
-            else:
-                where_parts.append(
-                    f'UPPER(TRIM(CAST("{col}" AS VARCHAR))) = UPPER(TRIM(?))'
-                )
-                params.append(programme_code)
+    for programme_code in codes:
+        if programme_array:
+            where_parts.append(
+                f'EXISTS (SELECT 1 FROM unnest("{programme_col}") AS _md_prog(prog) '
+                f'WHERE UPPER(TRIM(CAST(_md_prog.prog AS VARCHAR))) = UPPER(TRIM(?)))'
+            )
+            params.append(programme_code)
+        elif programme_ilike:
+            where_parts.append(f'CAST("{programme_col}" AS VARCHAR) ILIKE ?')
+            params.append(f"%{programme_code}%")
+        else:
+            where_parts.append(
+                f'UPPER(TRIM(CAST("{programme_col}" AS VARCHAR))) = UPPER(TRIM(?))'
+            )
+            params.append(programme_code)
 
     programme_clause = (
         where_parts[0] if len(where_parts) == 1 else "(" + " OR ".join(where_parts) + ")"
     )
     query = f"SELECT * FROM {relation} WHERE {programme_clause}"
-    if category_name and category_cols:
-        for col in category_cols:
-            query += f' AND TRIM(CAST("{col}" AS VARCHAR)) = TRIM(?)'
+    if category_name and category_candidates:
+        category_col = _pick_first_mart_column(mart_cols, category_candidates)
+        if category_col:
+            query += f' AND TRIM(CAST("{category_col}" AS VARCHAR)) = TRIM(?)'
             params.append(category_name)
     if order_columns:
         order = ", ".join(f'"{col}"' for col in order_columns)
@@ -954,6 +984,11 @@ def main() -> None:
             output_dir,
             display_programme_code=programme_code,
         )
+    except Exception:
+        import traceback
+
+        traceback.print_exc()
+        raise
     finally:
         conn.close()
 
