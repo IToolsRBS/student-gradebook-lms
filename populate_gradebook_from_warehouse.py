@@ -67,9 +67,6 @@ MART_SHEET_HEADERS: dict[str, list[str]] = {
         "Submitted Count",
         "Missed Count",
         "Late Submissions",
-        "Submitted %",
-        "Missed %",
-        "Late %",
     ],
     "Missed Assessments": [
         "Student No",
@@ -246,28 +243,6 @@ def format_cell(value: Any) -> Any:
     return value
 
 
-def format_percent_cell(value: Any) -> Any:
-    """Format mart rate fields stored as decimals (e.g. 0.45) as percentages (45%)."""
-    if value is None or value == "":
-        return ""
-    try:
-        import pandas as pd
-
-        if pd.isna(value):
-            return ""
-    except (TypeError, ValueError):
-        pass
-    try:
-        number = float(value)
-    except (TypeError, ValueError):
-        return format_cell(value)
-    if abs(number) <= 1:
-        number *= 100
-    if abs(number - round(number)) < 0.05:
-        return f"{int(round(number))}%"
-    return f"{number:.1f}%"
-
-
 def prettify_sheet(ws: Worksheet) -> None:
     if ws.max_row < 1 or ws.max_column < 1:
         return
@@ -307,19 +282,13 @@ def write_mapped_rows(
     rows: Iterable[dict[str, Any]],
     headers: Sequence[str],
     field_map: Sequence[tuple[str, tuple[str, ...]]],
-    percent_labels: frozenset[str] | None = None,
 ) -> None:
     write_headers(ws, headers)
     for raw in rows:
         row = normalize_row(raw)
-        values: list[Any] = []
-        for label, aliases in field_map:
-            raw_value = pick(row, *aliases)
-            if percent_labels and label in percent_labels:
-                values.append(format_percent_cell(raw_value))
-            else:
-                values.append(format_cell(raw_value))
-        ws.append(values)
+        ws.append(
+            [format_cell(pick(row, *aliases)) for _, aliases in field_map]
+        )
 
 
 def fetch_mart_rows(
@@ -567,9 +536,6 @@ def write_module_summary(
         "Missed Submissions",
         "Late Submissions",
         "Upcoming",
-        "Submission Rate %",
-        "Missed Rate %",
-        "Late Rate %",
     ]
     field_map = [
         ("Programme", ("programme",)),
@@ -580,9 +546,6 @@ def write_module_summary(
         ("Missed Submissions", ("missed_submissions", "missed")),
         ("Late Submissions", ("late_submissions", "late")),
         ("Upcoming", ("upcoming_assessments", "upcoming")),
-        ("Submission Rate %", ("submission_rate_pct",)),
-        ("Missed Rate %", ("missed_rate_pct",)),
-        ("Late Rate %", ("late_rate_pct", "late_pct")),
     ]
     rows = fetch_mart_rows(
         conn,
@@ -592,15 +555,7 @@ def write_module_summary(
         category_name,
         order_columns=["module_code", "module"],
     )
-    write_mapped_rows(
-        ws,
-        rows,
-        headers,
-        field_map,
-        percent_labels=frozenset(
-            {"Submission Rate %", "Missed Rate %", "Late Rate %"}
-        ),
-    )
+    write_mapped_rows(ws, rows, headers, field_map)
 
 
 def write_submission_trends(
@@ -621,9 +576,6 @@ def write_submission_trends(
         "Submitted Count",
         "Missed Count",
         "Late Submissions",
-        "Submitted %",
-        "Missed %",
-        "Late %",
     ]
     field_map = [
         ("Programme", ("programme",)),
@@ -636,9 +588,6 @@ def write_submission_trends(
         ("Submitted Count", ("submitted_count",)),
         ("Missed Count", ("missed_count",)),
         ("Late Submissions", ("late_count", "late_submissions")),
-        ("Submitted %", ("submitted_pct",)),
-        ("Missed %", ("missed_pct",)),
-        ("Late %", ("late_pct", "late_rate_pct")),
     ]
     rows = fetch_mart_rows(
         conn,
@@ -648,13 +597,7 @@ def write_submission_trends(
         category_name,
         order_columns=["module_code", "assessment"],
     )
-    write_mapped_rows(
-        ws,
-        rows,
-        headers,
-        field_map,
-        percent_labels=frozenset({"Submitted %", "Missed %", "Late %"}),
-    )
+    write_mapped_rows(ws, rows, headers, field_map)
 
 
 def write_student_assessment_detail(
