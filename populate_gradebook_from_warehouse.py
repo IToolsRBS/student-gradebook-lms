@@ -25,7 +25,6 @@ from motherduck_client import (
     read_env_value,
 )
 from warehouse_export_fallback import build_workbook_offering_fallback
-from warehouse_metadata import resolve_export_program_codes
 
 DEFAULT_SCHEMA = "moodle_processed"
 
@@ -108,7 +107,7 @@ MART_SHEET_HEADERS: dict[str, list[str]] = {
 
 # Per-mart programme/category filter columns (warehouse schema).
 # All gradebook marts are scoped by category_name (intake) + offering code.
-# Assessment detail uses course_prefix (dropdown value); summaries use programme.
+# All marts filter on programme (dropdown value from gradebook_module_summary).
 MART_FILTER: dict[str, dict[str, Any]] = {
     TABLE_PROGRAMME: {
         "programme_cols": ("programme", "program_code"),
@@ -127,7 +126,7 @@ MART_FILTER: dict[str, dict[str, Any]] = {
         "category_cols": ("category_name",),
     },
     TABLE_ASSESSMENT: {
-        "programme_cols": ("course_prefix",),
+        "programme_cols": ("programme", "program_code"),
         "category_cols": ("category_name",),
     },
     TABLE_MISSED: {
@@ -863,7 +862,11 @@ def build_workbook(
             programme_codes=programme_codes,
         )
 
-    export_codes = _export_codes_for_check(programme_codes, display_programme_code)
+    export_codes = (
+        [display_programme_code.strip().upper()]
+        if display_programme_code
+        else list(programme_codes)
+    )
 
     wb = Workbook()
     default = wb.active
@@ -942,12 +945,7 @@ def main() -> None:
 
     conn = connect_motherduck()
     try:
-        if category_name:
-            programme_codes = resolve_export_program_codes(
-                conn, category_name, programme_code
-            )
-        else:
-            programme_codes = [programme_code]
+        programme_codes = [programme_code]
         out_path = build_workbook(
             conn,
             schema,

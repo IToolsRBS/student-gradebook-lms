@@ -24,6 +24,7 @@ from motherduck_client import (
 
 INT_PROGRAM_CODES_TABLE = "int_moodle_program_codes"
 BRIDGE_CATEGORY_PROGRAMMES_TABLE = "bridge_category_programmes"
+MODULE_SUMMARY_TABLE = "gradebook_module_summary"
 
 
 def _table_columns(conn: duckdb.DuckDBPyConnection, qualified: str) -> set[str]:
@@ -469,6 +470,61 @@ def _programmes_require_gradebook() -> bool:
     return flag in ("1", "true", "yes", "on")
 
 
+def _module_summary_relation(conn: duckdb.DuckDBPyConnection) -> str | None:
+    """Qualified gradebook_module_summary when deployed in MotherDuck."""
+    schema = gradebook_schema()
+    qualified = qualified_relation(schema, MODULE_SUMMARY_TABLE)
+    try:
+        conn.execute(f"SELECT 1 FROM {qualified} LIMIT 1")
+        return qualified
+    except duckdb.CatalogException:
+        return None
+
+
+def _fetch_programmes_from_module_summary(
+    conn: duckdb.DuckDBPyConnection, category_name: str
+) -> list[dict[str, Any]]:
+    """
+    Distinct programme codes from gradebook_module_summary for the category.
+
+    Dropdown grain matches export filter: BCOM and BCOMHR stay separate.
+    """
+    relation = _module_summary_relation(conn)
+    if not relation:
+        return []
+
+    cols = _table_columns(conn, relation)
+    if "programme" not in cols:
+        return []
+
+    category_filter = ""
+    params: list[Any] = []
+    if "category_name" in cols:
+        category_filter = "AND TRIM(CAST(category_name AS VARCHAR)) = TRIM(?)"
+        params.append(category_name)
+
+    df = conn.execute(
+        f"""
+        SELECT DISTINCT
+            UPPER(TRIM(CAST(programme AS VARCHAR))) AS programme_code
+        FROM {relation}
+        WHERE programme IS NOT NULL
+          AND TRIM(CAST(programme AS VARCHAR)) <> ''
+          {category_filter}
+        ORDER BY programme_code
+        """,
+        params,
+    ).fetchdf()
+
+    rows: list[dict[str, Any]] = []
+    for row in df.to_dict("records"):
+        code = str(row.get("programme_code") or "").strip()
+        if not code or code.lower() == "nan":
+            continue
+        rows.append({"programme_code": code, "program_name": code})
+    return rows
+
+
 def _fetch_programmes_from_bridge(
     conn: duckdb.DuckDBPyConnection, bridge: str, category_name: str
 ) -> list[dict[str, Any]]:
@@ -568,23 +624,26 @@ def fetch_programmes(
     staging_schema_name: str | None = None,
 ) -> list[dict[str, Any]]:
     """
-    All programme offerings for the selected category (course_prefix / raw_prefix grain).
+    Programme codes for the selected category, one row per distinct mart programme
+    (e.g. BCOM vs BCOMHR) from gradebook_module_summary when available.
 
-    Uses bridge_category_programmes when deployed; otherwise int_moodle_program_codes.
-    Returns every offering in the category — not limited to gradebook marts (BCOM/MBA/BBA).
+    Falls back to bridge_category_programmes / int_moodle_program_codes when the
+    module summary mart is missing or has no rows for the category.
     Set WAREHOUSE_PROGRAMMES_REQUIRE_GRADEBOOK=true to restore the old filtered list.
     """
     category_name = category_name.strip()
-    bridge = bridge_category_programmes_relation(conn)
-    if bridge:
-        rows = _fetch_programmes_from_bridge(conn, bridge, category_name)
-    else:
-        rows = _fetch_programmes_fallback(
-            conn,
-            category_name,
-            dim_schema_name=dim_schema_name,
-            staging_schema_name=staging_schema_name,
-        )
+    rows = _fetch_programmes_from_module_summary(conn, category_name)
+    if not rows:
+        bridge = bridge_category_programmes_relation(conn)
+        if bridge:
+            rows = _fetch_programmes_from_bridge(conn, bridge, category_name)
+        else:
+            rows = _fetch_programmes_fallback(
+                conn,
+                category_name,
+                dim_schema_name=dim_schema_name,
+                staging_schema_name=staging_schema_name,
+            )
 
     if not rows:
         return []
@@ -607,32 +666,11 @@ def _filter_programmes_with_gradebook(
     dim_schema_name: str | None,
     staging_schema_name: str | None,
 ) -> list[dict[str, Any]]:
-    export_candidates: list[str] = []
-    for row in rows:
-        export_candidates.extend(
-            resolve_export_program_codes(
-                conn,
-                category_name,
-                row["programme_code"],
-                dim_schema_name=dim_schema_name,
-                staging_schema_name=staging_schema_name,
-            )
-        )
-    with_data = _programme_codes_with_gradebook_rows(conn, export_candidates)
+    codes = [row["programme_code"] for row in rows if row.get("programme_code")]
+    with_data = _programme_codes_with_gradebook_rows(conn, codes)
     if not with_data:
         return []
-    filtered: list[dict[str, Any]] = []
-    for row in rows:
-        export_codes = resolve_export_program_codes(
-            conn,
-            category_name,
-            row["programme_code"],
-            dim_schema_name=dim_schema_name,
-            staging_schema_name=staging_schema_name,
-        )
-        if set(export_codes) & with_data:
-            filtered.append(row)
-    return filtered
+    return [row for row in rows if row["programme_code"] in with_data]
 
 
 def debug_programme_chain(

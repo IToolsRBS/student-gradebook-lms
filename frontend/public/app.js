@@ -236,12 +236,8 @@ async function loadProgrammes(programmeDropdown, categoryName) {
     );
     programmeDropdown.setOptions(
       programmes.map((p) => {
-        const prefix = p.programme_code;
-        const name = p.program_name || prefix;
-        return {
-          value: prefix,
-          label: name === prefix ? prefix : `${prefix} — ${name}`
-        };
+        const code = p.programme_code;
+        return { value: code, label: code };
       }),
       "Select programme"
     );
