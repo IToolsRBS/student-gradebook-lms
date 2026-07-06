@@ -245,10 +245,19 @@ function makeJobId() {
 function cleanupOldJobs() {
   const now = Date.now();
   for (const [jobId, job] of exportJobs.entries()) {
+    if (job.status === "queued" || job.status === "running") {
+      continue;
+    }
     if (now - Number(job.updatedAt || now) > EXPORT_JOB_TTL_MS) {
       exportJobs.delete(jobId);
     }
   }
+}
+
+function publicJobPayload(job) {
+  if (!job) return null;
+  const { logs: _logs, filePath: _filePath, ...rest } = job;
+  return rest;
 }
 
 function updateJob(jobId, patch) {
@@ -393,23 +402,35 @@ app.post("/api/export-excel/start", async (req, res) => {
         message: "Building Excel from MotherDuck gradebook marts..."
       });
 
-      const exportResult = await runProcess(
-        pythonBin,
-        [
-          "populate_gradebook_from_warehouse.py",
-          "--programme-code",
-          programmeCode,
-          "--category-name",
-          categoryName,
-          "--warehouse-schema",
-          warehouseSchema,
-          "--output-dir",
-          exportOutputDir
-        ],
-        projectRoot,
-        motherduckEnv(),
-        { logPrefix: `[export-job:${jobId}][excel]` }
-      );
+      const heartbeat = setInterval(() => {
+        const elapsedSec = Math.round((Date.now() - startedAt) / 1000);
+        updateJob(jobId, {
+          message: `Building Excel from MotherDuck gradebook marts... (${elapsedSec}s)`
+        });
+      }, 10000);
+
+      let exportResult;
+      try {
+        exportResult = await runProcess(
+          pythonBin,
+          [
+            "populate_gradebook_from_warehouse.py",
+            "--programme-code",
+            programmeCode,
+            "--category-name",
+            categoryName,
+            "--warehouse-schema",
+            warehouseSchema,
+            "--output-dir",
+            exportOutputDir
+          ],
+          projectRoot,
+          motherduckEnv(),
+          { logPrefix: `[export-job:${jobId}][excel]` }
+        );
+      } finally {
+        clearInterval(heartbeat);
+      }
 
       if (exportResult.code !== 0) {
         const logTail = exportResult.output
@@ -476,7 +497,7 @@ app.get("/api/export-excel/jobs/:jobId", (req, res) => {
   if (!job) {
     return res.status(404).json({ error: "Job not found" });
   }
-  res.json(job);
+  res.json(publicJobPayload(job));
 });
 
 app.get("/api/export-excel/jobs/:jobId/download", async (req, res) => {

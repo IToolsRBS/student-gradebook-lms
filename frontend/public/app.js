@@ -145,13 +145,32 @@ function initCustomDropdown(dropdownEl, placeholder) {
   };
 }
 
-async function fetchJson(url) {
-  const response = await fetch(url, { credentials: "same-origin" });
+async function readResponseJson(response) {
   if (response.status === 401) {
     window.location.href = "/auth/login";
     throw new Error("Sign in required");
   }
-  const payload = await response.json();
+  const text = await response.text();
+  if (!text.trim()) {
+    throw new Error(
+      `Server returned an empty response (HTTP ${response.status}). The export may have timed out — try again.`
+    );
+  }
+  try {
+    return JSON.parse(text);
+  } catch {
+    const preview = text.replace(/\s+/g, " ").trim().slice(0, 120);
+    throw new Error(
+      preview
+        ? `Unexpected server response (HTTP ${response.status}): ${preview}`
+        : `Unexpected server response (HTTP ${response.status})`
+    );
+  }
+}
+
+async function fetchJson(url) {
+  const response = await fetch(url, { credentials: "same-origin" });
+  const payload = await readResponseJson(response);
   if (!response.ok) {
     throw new Error(payload?.error || `Request failed: ${response.status}`);
   }
@@ -314,7 +333,7 @@ exportBtn?.addEventListener("click", async () => {
         programmeCode
       })
     });
-    const startPayload = await startResponse.json();
+    const startPayload = await readResponseJson(startResponse);
     if (!startResponse.ok || !startPayload?.jobId) {
       throw new Error(startPayload?.error || "Could not start export");
     }
@@ -326,7 +345,7 @@ exportBtn?.addEventListener("click", async () => {
         `/api/export-excel/jobs/${encodeURIComponent(jobId)}`,
         { credentials: "same-origin" }
       );
-      const job = await pollResponse.json();
+      const job = await readResponseJson(pollResponse);
       if (!pollResponse.ok) {
         throw new Error(job?.error || "Could not fetch export status");
       }
@@ -344,7 +363,7 @@ exportBtn?.addEventListener("click", async () => {
 
       if (job?.status === "done") break;
       if (job?.status === "failed") {
-        const detail = job?.error || job?.logs || job?.message || "Export job failed";
+        const detail = job?.error || job?.message || "Export job failed";
         throw new Error(detail);
       }
       await new Promise((resolve) => setTimeout(resolve, 1500));
@@ -359,10 +378,10 @@ exportBtn?.addEventListener("click", async () => {
     if (!downloadResponse.ok) {
       let message = "Download failed";
       try {
-        const payload = await downloadResponse.json();
+        const payload = await readResponseJson(downloadResponse);
         message = payload?.error || message;
-      } catch {
-        message = `${message} (HTTP ${downloadResponse.status})`;
+      } catch (parseError) {
+        message = parseError?.message || `${message} (HTTP ${downloadResponse.status})`;
       }
       throw new Error(message);
     }
