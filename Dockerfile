@@ -16,7 +16,8 @@ WORKDIR /app
 COPY requirements.txt .
 RUN python3 -m venv /opt/venv \
   && /opt/venv/bin/pip install --no-cache-dir --upgrade pip \
-  && /opt/venv/bin/pip install --no-cache-dir -r requirements.txt
+  && /opt/venv/bin/pip install --no-cache-dir -r requirements.txt \
+  && /opt/venv/bin/python -c "import duckdb; duckdb.sql('INSTALL motherduck'); print(duckdb.__version__)"
 ENV PATH="/opt/venv/bin:${PATH}"
 
 # Node dependencies (production only).

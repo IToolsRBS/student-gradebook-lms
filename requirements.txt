@@ -1,3 +1,5 @@
-duckdb>=1.1.0
+# Pin DuckDB below versions where the MotherDuck extension is not yet published
+# on extensions.duckdb.org (e.g. 1.5.5 returned HTTP 404 for linux_amd64).
+duckdb>=1.2.0,<1.5.5
 openpyxl>=3.1.0
 pandas>=2.0.0

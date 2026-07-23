@@ -9,11 +9,10 @@ from __future__ import annotations
 
 from datetime import datetime
 from pathlib import Path
-from typing import Any, Sequence
+from typing import Any, Iterator, Sequence
 
 import duckdb
 from openpyxl import Workbook
-from openpyxl.worksheet.worksheet import Worksheet
 
 from motherduck_client import (
     courses_schema,
@@ -22,9 +21,29 @@ from motherduck_client import (
 )
 from warehouse_metadata import course_ids_for_offering
 
+FETCH_CHUNK_SIZE = 1000
+
+
 def _course_id_filter(course_ids: Sequence[int]) -> tuple[str, list[Any]]:
     placeholders = ", ".join("?" for _ in course_ids)
     return f"CAST(dc.course_id AS BIGINT) IN ({placeholders})", list(course_ids)
+
+
+def _iter_query_dicts(
+    conn: duckdb.DuckDBPyConnection,
+    query: str,
+    params: Sequence[Any],
+    *,
+    chunk_size: int = FETCH_CHUNK_SIZE,
+) -> Iterator[dict[str, Any]]:
+    result = conn.execute(query, list(params))
+    columns = [str(desc[0]) for desc in result.description]
+    while True:
+        batch = result.fetchmany(chunk_size)
+        if not batch:
+            break
+        for tup in batch:
+            yield dict(zip(columns, tup))
 
 
 def _fetch_enrollment_student_summary(
@@ -37,26 +56,28 @@ def _fetch_enrollment_student_summary(
     courses = qualified_relation(courses_schema(), "dim_courses")
     enrollments = qualified_relation(staging_schema(), "stg_moodle_enrollments")
     clause, params = _course_id_filter(course_ids)
-    df = conn.execute(
-        f"""
-        SELECT
-            TRIM(e.user_idnumber) AS student_no,
-            TRIM(e.user_fullname) AS student,
-            TRIM(e.user_email) AS email,
-            ? AS programme,
-            COUNT(DISTINCT e.course_id) AS modules
-        FROM {enrollments} AS e
-        INNER JOIN {courses} AS dc ON dc.course_id = e.course_id
-        WHERE {clause}
-          AND e.primary_role = 'student'
-          AND COALESCE(e.is_suspended, false) = false
-          AND TRIM(COALESCE(e.user_idnumber, '')) <> ''
-        GROUP BY 1, 2, 3, 4
-        ORDER BY student
-        """,
-        [display_programme, *params],
-    ).fetchdf()
-    return [dict(r) for r in df.to_dict("records")]
+    return list(
+        _iter_query_dicts(
+            conn,
+            f"""
+            SELECT
+                TRIM(e.user_idnumber) AS student_no,
+                TRIM(e.user_fullname) AS student,
+                TRIM(e.user_email) AS email,
+                ? AS programme,
+                COUNT(DISTINCT e.course_id) AS modules
+            FROM {enrollments} AS e
+            INNER JOIN {courses} AS dc ON dc.course_id = e.course_id
+            WHERE {clause}
+              AND e.primary_role = 'student'
+              AND COALESCE(e.is_suspended, false) = false
+              AND TRIM(COALESCE(e.user_idnumber, '')) <> ''
+            GROUP BY 1, 2, 3, 4
+            ORDER BY student
+            """,
+            [display_programme, *params],
+        )
+    )
 
 
 def _fetch_module_summary(
@@ -69,39 +90,42 @@ def _fetch_module_summary(
     courses = qualified_relation(courses_schema(), "dim_courses")
     enrollments = qualified_relation(staging_schema(), "stg_moodle_enrollments")
     clause, params = _course_id_filter(course_ids)
-    df = conn.execute(
-        f"""
-        SELECT
-            ? AS programme,
-            TRIM(dc.course_shortname) AS module_code,
-            TRIM(dc.course_fullname) AS module,
-            COUNT(DISTINCT e.user_id) AS students
-        FROM {courses} AS dc
-        LEFT JOIN {enrollments} AS e
-            ON e.course_id = dc.course_id
-           AND e.primary_role = 'student'
-           AND COALESCE(e.is_suspended, false) = false
-        WHERE {clause}
-        GROUP BY dc.course_id, dc.course_shortname, dc.course_fullname
-        ORDER BY module_code
-        """,
-        [display_programme, *params],
-    ).fetchdf()
-    return [dict(r) for r in df.to_dict("records")]
+    return list(
+        _iter_query_dicts(
+            conn,
+            f"""
+            SELECT
+                ? AS programme,
+                TRIM(dc.course_shortname) AS module_code,
+                TRIM(dc.course_fullname) AS module,
+                COUNT(DISTINCT e.user_id) AS students
+            FROM {courses} AS dc
+            LEFT JOIN {enrollments} AS e
+                ON e.course_id = dc.course_id
+               AND e.primary_role = 'student'
+               AND COALESCE(e.is_suspended, false) = false
+            WHERE {clause}
+            GROUP BY dc.course_id, dc.course_shortname, dc.course_fullname
+            ORDER BY module_code
+            """,
+            [display_programme, *params],
+        )
+    )
 
 
-def _fetch_grade_rows(
+def _iter_grade_rows(
     conn: duckdb.DuckDBPyConnection,
     course_ids: Sequence[int],
     display_programme: str,
-) -> list[dict[str, Any]]:
+) -> Iterator[dict[str, Any]]:
     if not course_ids:
-        return []
+        return
     courses = qualified_relation(courses_schema(), "dim_courses")
     grades = qualified_relation(staging_schema(), "stg_moodle_grades")
     items = qualified_relation(staging_schema(), "stg_moodle_grade_items")
     clause, params = _course_id_filter(course_ids)
-    df = conn.execute(
+    yield from _iter_query_dicts(
+        conn,
         f"""
         SELECT
             TRIM(g.user_idnumber) AS student_no,
@@ -123,8 +147,7 @@ def _fetch_grade_rows(
         ORDER BY student, module_code, assessment
         """,
         [display_programme, *params],
-    ).fetchdf()
-    return [dict(r) for r in df.to_dict("records")]
+    )
 
 
 def build_workbook_offering_fallback(
@@ -142,9 +165,10 @@ def build_workbook_offering_fallback(
         COURSE_NOTES_SHEET_TITLE,
         MART_SHEET_HEADERS,
         add_header_only_sheet,
+        finish_sheet,
         format_cell,
-        prettify_sheet,
         write_gradebook_course_notes,
+        write_headers,
         write_missed_assessments,
         write_submission_trends,
         write_upcoming_deadlines,
@@ -155,24 +179,24 @@ def build_workbook_offering_fallback(
 
     students = _fetch_enrollment_student_summary(conn, course_ids, display)
     modules = _fetch_module_summary(conn, course_ids, display)
-    grades = _fetch_grade_rows(conn, course_ids, display)
 
-    wb = Workbook()
-    default = wb.active
-    wb.remove(default)
+    wb = Workbook(write_only=True)
 
     ws_prog = wb.create_sheet(title="Programme Summary"[:31])
-    ws_prog.append(["Metric", "Value"])
-    ws_prog.append(["Programme", display])
-    ws_prog.append(["Students", len(students)])
-    ws_prog.append(["Modules", len(modules)])
-    ws_prog.append(["Grade records", len(grades)])
-    prettify_sheet(ws_prog)
+    write_headers(ws_prog, ["Metric", "Value"])
+    prog_rows = [
+        ["Programme", display],
+        ["Students", len(students)],
+        ["Modules", len(modules)],
+        ["Grade records", "(see Student Assessment Detail)"],
+    ]
+    for row in prog_rows:
+        ws_prog.append(row)
+    finish_sheet(ws_prog, 2, len(prog_rows))
 
     ws_stu = wb.create_sheet(title="Student Summary"[:31])
-    ws_stu.append(
-        ["Student No", "Student", "Email", "Programme", "Modules"]
-    )
+    stu_headers = ["Student No", "Student", "Email", "Programme", "Modules"]
+    write_headers(ws_stu, stu_headers)
     for row in students:
         ws_stu.append(
             [
@@ -183,10 +207,11 @@ def build_workbook_offering_fallback(
                 format_cell(row.get("modules")),
             ]
         )
-    prettify_sheet(ws_stu)
+    finish_sheet(ws_stu, len(stu_headers), len(students))
 
     ws_mod = wb.create_sheet(title="Module Summary"[:31])
-    ws_mod.append(["Programme", "Module Code", "Module", "Students"])
+    mod_headers = ["Programme", "Module Code", "Module", "Students"]
+    write_headers(ws_mod, mod_headers)
     for row in modules:
         ws_mod.append(
             [
@@ -196,7 +221,7 @@ def build_workbook_offering_fallback(
                 format_cell(row.get("students")),
             ]
         )
-    prettify_sheet(ws_mod)
+    finish_sheet(ws_mod, len(mod_headers), len(modules))
 
     mart_codes = list(programme_codes or [])
     mart_schema = schema
@@ -205,28 +230,27 @@ def build_workbook_offering_fallback(
         if mart_schema and mart_codes:
             ws = wb.create_sheet(title=title[:31])
             writer(ws, conn, mart_schema, mart_codes, category_name)
-            prettify_sheet(ws)
         else:
             add_header_only_sheet(wb, title, MART_SHEET_HEADERS[header_key])
 
     _mart_sheet("Submission Trends", write_submission_trends, "Submission Trends")
 
     ws_det = wb.create_sheet(title="Student Assessment Detail"[:31])
-    ws_det.append(
-        [
-            "Student No",
-            "Student",
-            "Programme",
-            "Module Code",
-            "Module",
-            "Assessment",
-            "Grade",
-            "Grade %",
-            "Submitted At",
-            "Graded At",
-        ]
-    )
-    for row in grades:
+    det_headers = [
+        "Student No",
+        "Student",
+        "Programme",
+        "Module Code",
+        "Module",
+        "Assessment",
+        "Grade",
+        "Grade %",
+        "Submitted At",
+        "Graded At",
+    ]
+    write_headers(ws_det, det_headers)
+    grade_count = 0
+    for row in _iter_grade_rows(conn, course_ids, display):
         ws_det.append(
             [
                 format_cell(row.get("student_no")),
@@ -241,7 +265,8 @@ def build_workbook_offering_fallback(
                 format_cell(row.get("graded_at")),
             ]
         )
-    prettify_sheet(ws_det)
+        grade_count += 1
+    finish_sheet(ws_det, len(det_headers), grade_count)
 
     _mart_sheet("Missed Assessments", write_missed_assessments, "Missed Assessments")
     _mart_sheet("Upcoming Deadlines", write_upcoming_deadlines, "Upcoming Deadlines")
@@ -253,7 +278,6 @@ def build_workbook_offering_fallback(
         mart_codes,
         category_name,
     )
-    prettify_sheet(ws_notes)
 
     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
     safe_code = display.replace(" ", "_")

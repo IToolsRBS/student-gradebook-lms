@@ -86,10 +86,38 @@ def connect_motherduck() -> duckdb.DuckDBPyConnection:
     Connect to MotherDuck using the dbt-equivalent path md:{database}.
     Uses config= (recommended by MotherDuck) instead of query-string only.
     """
+    import re
+
     database = motherduck_database()
     token = motherduck_token()
     os.environ["motherduck_token"] = token
-    return duckdb.connect(f"md:{database}", config={"motherduck_token": token})
+    try:
+        conn = duckdb.connect(f"md:{database}", config={"motherduck_token": token})
+    except Exception as exc:
+        message = str(exc)
+        if "Failed to download extension \"motherduck\"" in message or (
+            "motherduck" in message.lower() and "HTTP 404" in message
+        ):
+            raise RuntimeError(
+                "DuckDB could not download the MotherDuck extension for this "
+                f"DuckDB version ({duckdb.__version__}). Pin duckdb in "
+                "requirements.txt to a version that has the MotherDuck extension "
+                "published (see extensions.duckdb.org), rebuild the image, and retry. "
+                f"Original error: {message}"
+            ) from exc
+        raise
+    # Cap local DuckDB buffer so exports are less likely to OOM on small hosts.
+    memory_limit = read_env_value("DUCKDB_MEMORY_LIMIT") or "512MB"
+    if re.fullmatch(r"\d+(?:\.\d+)?\s*(?:KB|MB|GB)", memory_limit, flags=re.I):
+        try:
+            conn.execute(f"SET memory_limit='{memory_limit.replace(' ', '')}'")
+        except Exception:
+            pass
+    try:
+        conn.execute("SET threads=2")
+    except Exception:
+        pass
+    return conn
 
 
 def gradebook_schema() -> str:

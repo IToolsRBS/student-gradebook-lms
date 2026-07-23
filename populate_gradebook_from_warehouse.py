@@ -8,15 +8,26 @@ Prints the absolute output path as the last stdout line for frontend/server.js.
 from __future__ import annotations
 
 import argparse
+import gc
+import math
 from datetime import date, datetime
 from decimal import Decimal
 from pathlib import Path
-from typing import Any, Iterable, Sequence
+from typing import Any, Iterator, Sequence
 
 import duckdb
 from openpyxl import Workbook
+from openpyxl.cell import WriteOnlyCell
 from openpyxl.styles import Alignment, Font, PatternFill
+from openpyxl.utils import get_column_letter
 from openpyxl.worksheet.worksheet import Worksheet
+
+# Stream MotherDuck results in chunks to avoid pandas DataFrame spikes.
+FETCH_CHUNK_SIZE = 1000
+# Sample this many data rows when estimating column widths (write-only sheets).
+COLUMN_WIDTH_SAMPLE_ROWS = 50
+DEFAULT_COLUMN_WIDTH = 18
+MAX_COLUMN_WIDTH = 45
 
 from motherduck_client import (
     connect_motherduck,
@@ -133,13 +144,29 @@ MART_FILTER: dict[str, dict[str, Any]] = {
 }
 
 
+def _is_missing(value: Any) -> bool:
+    """True for None / NaN without importing pandas."""
+    if value is None:
+        return True
+    if isinstance(value, float) and math.isnan(value):
+        return True
+    # numpy / pandas scalars expose dtype + item()
+    if hasattr(value, "dtype") and hasattr(value, "item"):
+        try:
+            if str(getattr(value, "dtype", "")).startswith("float"):
+                return bool(math.isnan(float(value)))
+        except (TypeError, ValueError):
+            return True
+    return False
+
+
 def _mart_columns(
     conn: duckdb.DuckDBPyConnection, schema: str, table: str
 ) -> dict[str, str]:
-    """Lowercase column name -> actual mart column name."""
+    """Lowercase column name -> actual mart column name (no pandas)."""
     relation = qualified_relation(schema, table)
-    df = conn.execute(f"SELECT * FROM {relation} LIMIT 0").fetchdf()
-    return {str(col).lower(): str(col) for col in df.columns}
+    described = conn.execute(f"DESCRIBE SELECT * FROM {relation} LIMIT 0").fetchall()
+    return {str(row[0]).lower(): str(row[0]) for row in described}
 
 
 def _pick_first_mart_column(
@@ -160,15 +187,8 @@ def pick(row: dict[str, Any], *keys: str) -> Any:
     """Return first non-empty value for any of the given column names."""
     for key in keys:
         value = row.get(key.lower())
-        if value is None:
+        if _is_missing(value):
             continue
-        try:
-            import pandas as pd
-
-            if pd.isna(value):
-                continue
-        except (TypeError, ValueError):
-            pass
         if isinstance(value, str) and not value.strip():
             continue
         return value
@@ -185,29 +205,15 @@ def _format_sequence(value: Any) -> str:
         return str(value)
     parts: list[str] = []
     for item in value:
-        if item is None:
+        if _is_missing(item):
             continue
-        try:
-            import pandas as pd
-
-            if pd.isna(item):
-                continue
-        except (TypeError, ValueError):
-            pass
         parts.append(str(item))
     return ", ".join(parts)
 
 
 def format_cell(value: Any) -> Any:
-    if value is None:
+    if _is_missing(value):
         return ""
-    try:
-        import pandas as pd
-
-        if pd.isna(value):
-            return ""
-    except (TypeError, ValueError):
-        pass
     if hasattr(value, "tolist") and not isinstance(value, (str, bytes, datetime, date)):
         return _format_sequence(value)
     if isinstance(value, (list, tuple)):
@@ -217,15 +223,8 @@ def format_cell(value: Any) -> Any:
             value = value.item()
         except (TypeError, ValueError):
             pass
-        if value is None:
+        if _is_missing(value):
             return ""
-        try:
-            import pandas as pd
-
-            if pd.isna(value):
-                return ""
-        except (TypeError, ValueError):
-            pass
     if isinstance(value, datetime):
         try:
             t = value.time()
@@ -243,70 +242,108 @@ def format_cell(value: Any) -> Any:
     return value
 
 
-def prettify_sheet(ws: Worksheet) -> None:
-    if ws.max_row < 1 or ws.max_column < 1:
-        return
-    header_fill = PatternFill(fill_type="solid", fgColor="1F4E78")
-    header_font = Font(color="FFFFFF", bold=True)
-    for cell in ws[1]:
-        cell.fill = header_fill
-        cell.font = header_font
-        cell.alignment = Alignment(horizontal="center", vertical="center", wrap_text=True)
-    ws.freeze_panes = "A2"
-    if ws.max_row > 1:
-        ws.auto_filter.ref = ws.dimensions
-    for column_cells in ws.columns:
-        max_len = 0
-        col_letter = column_cells[0].column_letter
-        for cell in column_cells:
-            text = "" if cell.value is None else str(cell.value)
-            max_len = max(max_len, len(text))
-            if cell.row > 1:
-                cell.alignment = Alignment(vertical="top", wrap_text=True)
-        ws.column_dimensions[col_letter].width = min(max(12, max_len + 2), 45)
+_HEADER_FILL = PatternFill(fill_type="solid", fgColor="1F4E78")
+_HEADER_FONT = Font(color="FFFFFF", bold=True)
+_HEADER_ALIGN = Alignment(horizontal="center", vertical="center", wrap_text=True)
 
 
 def write_headers(ws: Worksheet, headers: Sequence[str]) -> None:
-    ws.append(list(headers))
+    """Append styled header row (write-only safe)."""
+    cells: list[Any] = []
+    for header in headers:
+        cell = WriteOnlyCell(ws, value=header)
+        cell.fill = _HEADER_FILL
+        cell.font = _HEADER_FONT
+        cell.alignment = _HEADER_ALIGN
+        cells.append(cell)
+    ws.append(cells)
+
+
+def finish_sheet(
+    ws: Worksheet,
+    column_count: int,
+    data_row_count: int,
+    col_widths: Sequence[int] | None = None,
+) -> None:
+    """Freeze/filter/widths without scanning every cell (huge RAM saver)."""
+    if column_count < 1:
+        return
+    ws.freeze_panes = "A2"
+    last_col = get_column_letter(column_count)
+    last_row = max(1, data_row_count + 1)
+    ws.auto_filter.ref = f"A1:{last_col}{last_row}"
+    widths = list(col_widths) if col_widths else []
+    for idx in range(1, column_count + 1):
+        width = (
+            widths[idx - 1]
+            if idx - 1 < len(widths)
+            else DEFAULT_COLUMN_WIDTH
+        )
+        ws.column_dimensions[get_column_letter(idx)].width = width
+
+
+def _update_col_widths(
+    widths: list[int], values: Sequence[Any], sample_remaining: list[int]
+) -> None:
+    if sample_remaining[0] <= 0:
+        return
+    sample_remaining[0] -= 1
+    for idx, value in enumerate(values):
+        text = "" if value is None else str(value)
+        length = min(len(text) + 2, MAX_COLUMN_WIDTH)
+        if idx >= len(widths):
+            widths.append(max(12, length))
+        else:
+            widths[idx] = max(widths[idx], length)
 
 
 def add_header_only_sheet(wb: Workbook, title: str, headers: Sequence[str]) -> None:
     """Create a mart sheet with column headers only (no data rows)."""
     ws = wb.create_sheet(title=title[:31])
     write_headers(ws, headers)
-    prettify_sheet(ws)
+    finish_sheet(ws, len(headers), 0)
 
 
 def write_mapped_rows(
     ws: Worksheet,
-    rows: Iterable[dict[str, Any]],
+    rows: Iterator[dict[str, Any]] | Sequence[dict[str, Any]],
     headers: Sequence[str],
     field_map: Sequence[tuple[str, tuple[str, ...]]],
-) -> None:
+) -> int:
     write_headers(ws, headers)
+    widths = [max(12, min(len(h) + 2, MAX_COLUMN_WIDTH)) for h in headers]
+    sample_remaining = [COLUMN_WIDTH_SAMPLE_ROWS]
+    count = 0
     for raw in rows:
         row = normalize_row(raw)
-        ws.append(
-            [format_cell(pick(row, *aliases)) for _, aliases in field_map]
-        )
+        values = [format_cell(pick(row, *aliases)) for _, aliases in field_map]
+        _update_col_widths(widths, values, sample_remaining)
+        ws.append(values)
+        count += 1
+    finish_sheet(ws, len(headers), count, widths)
+    return count
 
 
-def fetch_mart_rows(
+def _build_mart_filter_sql(
     conn: duckdb.DuckDBPyConnection,
     schema: str,
     table: str,
     programme_codes: Sequence[str],
     category_name: str | None,
     order_columns: Sequence[str] | None = None,
-) -> list[dict[str, Any]]:
-    """Filter rows using mart-specific programme/category columns."""
+    *,
+    limit: int | None = None,
+) -> tuple[str, list[Any]] | None:
+    """
+    Build SELECT for a mart filter. Returns None when the table/columns are missing.
+    """
     codes = [
         str(c).strip().upper()
         for c in programme_codes
         if str(c).strip()
     ]
     if not codes:
-        return []
+        return None
 
     spec = MART_FILTER.get(table, {"programme_cols": ("programme",), "category_cols": ()})
     programme_candidates: tuple[str, ...] = tuple(
@@ -320,10 +357,10 @@ def fetch_mart_rows(
     try:
         mart_cols = _mart_columns(conn, schema, table)
     except duckdb.CatalogException:
-        return []
+        return None
     programme_col = _pick_first_mart_column(mart_cols, programme_candidates)
     if not programme_col:
-        return []
+        return None
 
     where_parts: list[str] = []
     params: list[Any] = []
@@ -354,13 +391,93 @@ def fetch_mart_rows(
             query += f' AND TRIM(CAST("{category_col}" AS VARCHAR)) = TRIM(?)'
             params.append(category_name)
     if order_columns:
-        order = ", ".join(f'"{col}"' for col in order_columns)
-        query += f" ORDER BY {order}"
+        present = [col for col in order_columns if col.lower() in mart_cols]
+        if present:
+            order = ", ".join(f'"{mart_cols[col.lower()]}"' for col in present)
+            query += f" ORDER BY {order}"
+        else:
+            query += " ORDER BY 1"
     else:
         query += " ORDER BY 1"
+    if limit is not None:
+        query += f" LIMIT {int(limit)}"
+    return query, params
 
-    df = conn.execute(query, params).fetchdf()
-    return [normalize_row(dict(r)) for r in df.to_dict("records")]
+
+def iter_mart_rows(
+    conn: duckdb.DuckDBPyConnection,
+    schema: str,
+    table: str,
+    programme_codes: Sequence[str],
+    category_name: str | None,
+    order_columns: Sequence[str] | None = None,
+    *,
+    chunk_size: int = FETCH_CHUNK_SIZE,
+) -> Iterator[dict[str, Any]]:
+    """Stream mart rows in chunks (no pandas DataFrame)."""
+    built = _build_mart_filter_sql(
+        conn,
+        schema,
+        table,
+        programme_codes,
+        category_name,
+        order_columns,
+    )
+    if not built:
+        return
+    query, params = built
+    result = conn.execute(query, params)
+    columns = [str(desc[0]) for desc in result.description]
+    while True:
+        batch = result.fetchmany(chunk_size)
+        if not batch:
+            break
+        for tup in batch:
+            yield normalize_row(dict(zip(columns, tup)))
+
+
+def fetch_mart_rows(
+    conn: duckdb.DuckDBPyConnection,
+    schema: str,
+    table: str,
+    programme_codes: Sequence[str],
+    category_name: str | None,
+    order_columns: Sequence[str] | None = None,
+) -> list[dict[str, Any]]:
+    """Materialise mart rows (prefer iter_mart_rows for large sheets)."""
+    return list(
+        iter_mart_rows(
+            conn,
+            schema,
+            table,
+            programme_codes,
+            category_name,
+            order_columns,
+        )
+    )
+
+
+def mart_has_rows(
+    conn: duckdb.DuckDBPyConnection,
+    schema: str,
+    table: str,
+    programme_codes: Sequence[str],
+    category_name: str | None,
+) -> bool:
+    """True when at least one matching mart row exists (LIMIT 1)."""
+    built = _build_mart_filter_sql(
+        conn,
+        schema,
+        table,
+        programme_codes,
+        category_name,
+        order_columns=None,
+        limit=1,
+    )
+    if not built:
+        return False
+    query, params = built
+    return conn.execute(query, params).fetchone() is not None
 
 
 def count_suspended_students(
@@ -369,19 +486,35 @@ def count_suspended_students(
     programme_codes: Sequence[str],
     category_name: str | None,
 ) -> int:
-    rows = fetch_mart_rows(
+    built = _build_mart_filter_sql(
         conn,
         schema,
         TABLE_STUDENT,
         programme_codes,
         category_name,
+        order_columns=None,
     )
-    count = 0
-    for raw in rows:
-        status = str(pick(normalize_row(raw), "status")).strip().lower()
-        if status == "suspended":
-            count += 1
-    return count
+    if not built:
+        return 0
+    base_query, params = built
+    try:
+        student_cols = _mart_columns(conn, schema, TABLE_STUDENT)
+    except duckdb.CatalogException:
+        return 0
+    status_col = student_cols.get("status")
+    if not status_col:
+        return 0
+    # Drop ORDER BY for the aggregate wrapper (cheaper + avoids nested ORDER issues).
+    base_no_order = base_query.rsplit(" ORDER BY ", 1)[0]
+    query = f"""
+        SELECT COUNT(*) FROM ({base_no_order}) AS _students
+        WHERE LOWER(TRIM(CAST("{status_col}" AS VARCHAR))) = 'suspended'
+    """
+    try:
+        row = conn.execute(query, params).fetchone()
+    except Exception:
+        return 0
+    return int(row[0] or 0) if row else 0
 
 
 def _course_notes_table_columns(
@@ -389,12 +522,86 @@ def _course_notes_table_columns(
 ) -> list[str]:
     try:
         relation = qualified_relation(schema, TABLE_COURSE_NOTES)
-        columns = list(conn.execute(f"SELECT * FROM {relation} LIMIT 0").fetchdf().columns)
+        described = conn.execute(
+            f"DESCRIBE SELECT * FROM {relation} LIMIT 0"
+        ).fetchall()
+        columns = [str(row[0]) for row in described]
         if columns:
-            return [str(col) for col in columns]
+            return columns
     except Exception:
         pass
     return list(COURSE_NOTES_COLUMNS)
+
+
+def iter_course_note_rows(
+    conn: duckdb.DuckDBPyConnection,
+    schema: str,
+    programme_codes: Sequence[str],
+    category_name: str | None,
+    *,
+    chunk_size: int = FETCH_CHUNK_SIZE,
+) -> Iterator[dict[str, Any]]:
+    """Stream course notes for students in the offering (SQL subquery, no student preload)."""
+    student_filter = _build_mart_filter_sql(
+        conn,
+        schema,
+        TABLE_STUDENT,
+        programme_codes,
+        category_name,
+        order_columns=None,
+    )
+    if not student_filter:
+        return
+    student_sql, student_params = student_filter
+    try:
+        relation = qualified_relation(schema, TABLE_COURSE_NOTES)
+        note_cols = {
+            str(row[0]).lower(): str(row[0])
+            for row in conn.execute(
+                f"DESCRIBE SELECT * FROM {relation} LIMIT 0"
+            ).fetchall()
+        }
+        username_col = note_cols.get("username")
+        if not username_col:
+            return
+        student_cols = _mart_columns(conn, schema, TABLE_STUDENT)
+        student_no_col = student_cols.get("student_no")
+        if not student_no_col:
+            return
+        query = f"""
+            SELECT n.*
+            FROM {relation} AS n
+            WHERE TRIM(CAST(n."{username_col}" AS VARCHAR)) IN (
+                SELECT TRIM(CAST(s."{student_no_col}" AS VARCHAR))
+                FROM ({student_sql}) AS s
+                WHERE TRIM(CAST(s."{student_no_col}" AS VARCHAR)) <> ''
+            )
+            ORDER BY 1
+        """
+        # Prefer timestamp ordering when available.
+        if "timestamp" in note_cols:
+            query = f"""
+                SELECT n.*
+                FROM {relation} AS n
+                WHERE TRIM(CAST(n."{username_col}" AS VARCHAR)) IN (
+                    SELECT TRIM(CAST(s."{student_no_col}" AS VARCHAR))
+                    FROM ({student_sql}) AS s
+                    WHERE TRIM(CAST(s."{student_no_col}" AS VARCHAR)) <> ''
+                )
+                ORDER BY n."{note_cols['timestamp']}" DESC,
+                         n."{username_col}",
+                         n."{note_cols.get('course_display_name', username_col)}"
+            """
+        result = conn.execute(query, student_params)
+        columns = [str(desc[0]) for desc in result.description]
+        while True:
+            batch = result.fetchmany(chunk_size)
+            if not batch:
+                break
+            for tup in batch:
+                yield dict(zip(columns, tup))
+    except Exception:
+        return
 
 
 def fetch_course_note_rows(
@@ -403,41 +610,9 @@ def fetch_course_note_rows(
     programme_codes: Sequence[str],
     category_name: str | None,
 ) -> list[dict[str, Any]]:
-    """Course notes for students in the selected category/programme offering."""
-    students = fetch_mart_rows(
-        conn,
-        schema,
-        TABLE_STUDENT,
-        programme_codes,
-        category_name,
-        order_columns=["student_no"],
+    return list(
+        iter_course_note_rows(conn, schema, programme_codes, category_name)
     )
-    student_nos = list(
-        {
-            str(pick(normalize_row(row), "student_no")).strip()
-            for row in students
-            if pick(normalize_row(row), "student_no")
-        }
-    )
-    if not student_nos:
-        return []
-
-    try:
-        relation = qualified_relation(schema, TABLE_COURSE_NOTES)
-        placeholders = ", ".join("?" for _ in student_nos)
-        df = conn.execute(
-            f"""
-            SELECT *
-            FROM {relation}
-            WHERE TRIM(CAST(username AS VARCHAR)) IN ({placeholders})
-            ORDER BY timestamp DESC, username, course_display_name
-            """,
-            student_nos,
-        ).fetchdf()
-        return [dict(r) for r in df.to_dict("records")]
-    except Exception:
-        return []
-
 
 def write_programme_summary(
     ws: Worksheet,
@@ -447,11 +622,24 @@ def write_programme_summary(
     category_name: str | None,
     display_programme_code: str = "",
 ) -> None:
-    rows = fetch_mart_rows(
-        conn, schema, TABLE_PROGRAMME, programme_codes, category_name
+    built = _build_mart_filter_sql(
+        conn,
+        schema,
+        TABLE_PROGRAMME,
+        programme_codes,
+        category_name,
+        limit=1,
     )
-    write_headers(ws, ["Metric", "Value"])
-    summary = rows[0] if rows else {}
+    summary: dict[str, Any] = {}
+    if built:
+        query, params = built
+        result = conn.execute(query, params)
+        columns = [str(desc[0]) for desc in result.description]
+        row = result.fetchone()
+        if row:
+            summary = normalize_row(dict(zip(columns, row)))
+    headers = ["Metric", "Value"]
+    write_headers(ws, headers)
     metrics: list[tuple[str, tuple[str, ...]]] = [
         ("Programme", ("programme",)),
         ("Students", ("students",)),
@@ -463,6 +651,8 @@ def write_programme_summary(
         ("Upcoming Deadlines (14 Days)", ("upcoming_deadlines_14_days",)),
         ("Students With Missed Assessments", ("students_with_missed_assessments",)),
     ]
+    widths = [max(12, min(len(h) + 2, MAX_COLUMN_WIDTH)) for h in headers]
+    sample_remaining = [COLUMN_WIDTH_SAMPLE_ROWS]
     for label, aliases in metrics:
         value = pick(summary, *aliases)
         if label == "Suspended Students" and value == "":
@@ -471,7 +661,10 @@ def write_programme_summary(
             )
         if label == "Programme" and not value:
             value = display_programme_code or (programme_codes[0] if programme_codes else "")
-        ws.append([label, format_cell(value)])
+        values = [label, format_cell(value)]
+        _update_col_widths(widths, values, sample_remaining)
+        ws.append(values)
+    finish_sheet(ws, len(headers), len(metrics), widths)
 
 
 def write_student_summary(
@@ -509,15 +702,19 @@ def write_student_summary(
         ("Days Since Access", ("days_since_access",)),
         *NOTE_FIELD_MAP,
     ]
-    rows = fetch_mart_rows(
-        conn,
-        schema,
-        TABLE_STUDENT,
-        programme_codes,
-        category_name,
-        order_columns=["student_no"],
+    write_mapped_rows(
+        ws,
+        iter_mart_rows(
+            conn,
+            schema,
+            TABLE_STUDENT,
+            programme_codes,
+            category_name,
+            order_columns=["student_no"],
+        ),
+        headers,
+        field_map,
     )
-    write_mapped_rows(ws, rows, headers, field_map)
 
 
 def write_module_summary(
@@ -547,15 +744,19 @@ def write_module_summary(
         ("Late Submissions", ("late_submissions", "late")),
         ("Upcoming", ("upcoming_assessments", "upcoming")),
     ]
-    rows = fetch_mart_rows(
-        conn,
-        schema,
-        TABLE_MODULE,
-        programme_codes,
-        category_name,
-        order_columns=["module_code", "module"],
+    write_mapped_rows(
+        ws,
+        iter_mart_rows(
+            conn,
+            schema,
+            TABLE_MODULE,
+            programme_codes,
+            category_name,
+            order_columns=["module_code", "module"],
+        ),
+        headers,
+        field_map,
     )
-    write_mapped_rows(ws, rows, headers, field_map)
 
 
 def write_submission_trends(
@@ -589,15 +790,19 @@ def write_submission_trends(
         ("Missed Count", ("missed_count",)),
         ("Late Submissions", ("late_count", "late_submissions")),
     ]
-    rows = fetch_mart_rows(
-        conn,
-        schema,
-        TABLE_TRENDS,
-        programme_codes,
-        category_name,
-        order_columns=["module_code", "assessment"],
+    write_mapped_rows(
+        ws,
+        iter_mart_rows(
+            conn,
+            schema,
+            TABLE_TRENDS,
+            programme_codes,
+            category_name,
+            order_columns=["module_code", "assessment"],
+        ),
+        headers,
+        field_map,
     )
-    write_mapped_rows(ws, rows, headers, field_map)
 
 
 def write_student_assessment_detail(
@@ -623,16 +828,18 @@ def write_student_assessment_detail(
         "Max Grade",
         *[label for label, _ in NOTE_FIELD_MAP],
     ]
-    rows = fetch_mart_rows(
+    write_headers(ws, headers)
+    widths = [max(12, min(len(h) + 2, MAX_COLUMN_WIDTH)) for h in headers]
+    sample_remaining = [COLUMN_WIDTH_SAMPLE_ROWS]
+    count = 0
+    for raw in iter_mart_rows(
         conn,
         schema,
         TABLE_ASSESSMENT,
         programme_codes,
         category_name,
         order_columns=["course_shortname", "assessment_name", "user_idnumber"],
-    )
-    write_headers(ws, headers)
-    for raw in rows:
+    ):
         row = normalize_row(raw)
         submitted = pick(row, "grade_submitted_at", "last_attempt_at")
         is_submitted = row.get("is_submitted")
@@ -643,24 +850,26 @@ def write_student_assessment_detail(
             "yes",
         }:
             submitted = ""
-        ws.append(
-            [
-                format_cell(pick(row, "user_idnumber")),
-                format_cell(pick(row, "user_fullname")),
-                format_cell(pick(row, "user_email")),
-                format_cell(pick(row, "program_code")),
-                format_cell(pick(row, "course_shortname")),
-                format_cell(pick(row, "course_fullname")),
-                format_cell(pick(row, "assessment_name")),
-                format_cell(pick(row, "assessment_type")),
-                format_cell(pick(row, "due_at", "effective_deadline_at")),
-                format_cell(submitted),
-                format_cell(pick(row, "status")),
-                format_cell(pick(row, "grade_raw")),
-                format_cell(pick(row, "max_grade")),
-                *[format_cell(pick(row, *aliases)) for _, aliases in NOTE_FIELD_MAP],
-            ]
-        )
+        values = [
+            format_cell(pick(row, "user_idnumber")),
+            format_cell(pick(row, "user_fullname")),
+            format_cell(pick(row, "user_email")),
+            format_cell(pick(row, "program_code")),
+            format_cell(pick(row, "course_shortname")),
+            format_cell(pick(row, "course_fullname")),
+            format_cell(pick(row, "assessment_name")),
+            format_cell(pick(row, "assessment_type")),
+            format_cell(pick(row, "due_at", "effective_deadline_at")),
+            format_cell(submitted),
+            format_cell(pick(row, "status")),
+            format_cell(pick(row, "grade_raw")),
+            format_cell(pick(row, "max_grade")),
+            *[format_cell(pick(row, *aliases)) for _, aliases in NOTE_FIELD_MAP],
+        ]
+        _update_col_widths(widths, values, sample_remaining)
+        ws.append(values)
+        count += 1
+    finish_sheet(ws, len(headers), count, widths)
 
 
 def write_missed_assessments(
@@ -700,15 +909,19 @@ def write_missed_assessments(
         ("Status", ("status",)),
         *NOTE_FIELD_MAP,
     ]
-    rows = fetch_mart_rows(
-        conn,
-        schema,
-        TABLE_MISSED,
-        programme_codes,
-        category_name,
-        order_columns=["days_overdue", "student_no"],
+    write_mapped_rows(
+        ws,
+        iter_mart_rows(
+            conn,
+            schema,
+            TABLE_MISSED,
+            programme_codes,
+            category_name,
+            order_columns=["days_overdue", "student_no"],
+        ),
+        headers,
+        field_map,
     )
-    write_mapped_rows(ws, rows, headers, field_map)
 
 
 def write_gradebook_course_notes(
@@ -719,12 +932,18 @@ def write_gradebook_course_notes(
     category_name: str | None,
 ) -> None:
     columns = _course_notes_table_columns(conn, schema)
-    rows = fetch_course_note_rows(
-        conn, schema, programme_codes, category_name
-    )
     write_headers(ws, columns)
-    for raw in rows:
-        ws.append([format_cell(raw.get(col)) for col in columns])
+    widths = [max(12, min(len(h) + 2, MAX_COLUMN_WIDTH)) for h in columns]
+    sample_remaining = [COLUMN_WIDTH_SAMPLE_ROWS]
+    count = 0
+    for raw in iter_course_note_rows(
+        conn, schema, programme_codes, category_name
+    ):
+        values = [format_cell(raw.get(col)) for col in columns]
+        _update_col_widths(widths, values, sample_remaining)
+        ws.append(values)
+        count += 1
+    finish_sheet(ws, len(columns), count, widths)
 
 
 def write_upcoming_deadlines(
@@ -752,15 +971,19 @@ def write_upcoming_deadlines(
         ("Effective Deadline", ("effective_deadline_at",)),
         ("Hours Until Due", ("hours_until_due",)),
     ]
-    rows = fetch_mart_rows(
-        conn,
-        schema,
-        TABLE_UPCOMING,
-        programme_codes,
-        category_name,
-        order_columns=["hours_until_due", "effective_deadline_at"],
+    write_mapped_rows(
+        ws,
+        iter_mart_rows(
+            conn,
+            schema,
+            TABLE_UPCOMING,
+            programme_codes,
+            category_name,
+            order_columns=["hours_until_due", "effective_deadline_at"],
+        ),
+        headers,
+        field_map,
     )
-    write_mapped_rows(ws, rows, headers, field_map)
 
 
 def _export_codes_for_check(
@@ -793,38 +1016,28 @@ def offering_has_gradebook_rows(
     """
     True when any gradebook mart has rows for this offering.
 
-    Previously only gradebook_student_summary was checked, so offerings like PDEML
-    could fall back to enrollments even when other marts (module, assessment, etc.)
-    already had data after dbt updates.
+    Uses LIMIT 1 probes so large programmes (e.g. BCMAC) do not load full marts
+    just to decide between warehouse and fallback export.
     """
     codes = _export_codes_for_check(programme_codes, display_programme_code)
     if not codes:
         return False
 
-    probes: tuple[tuple[str, tuple[str, ...] | None], ...] = (
-        (TABLE_STUDENT, ("student_no",)),
-        (TABLE_MODULE, ("module_code",)),
-        (TABLE_PROGRAMME, None),
-        (TABLE_TRENDS, ("module_code",)),
-        (TABLE_ASSESSMENT, ("user_idnumber",)),
-        (TABLE_MISSED, ("student_no",)),
-        (TABLE_UPCOMING, ("student_no",)),
-        (TABLE_COURSE_NOTES, None),
+    probes: tuple[str, ...] = (
+        TABLE_STUDENT,
+        TABLE_MODULE,
+        TABLE_PROGRAMME,
+        TABLE_TRENDS,
+        TABLE_ASSESSMENT,
+        TABLE_MISSED,
+        TABLE_UPCOMING,
     )
-    for table, order_columns in probes:
-        if table == TABLE_COURSE_NOTES:
-            rows = fetch_course_note_rows(conn, schema, codes, category_name)
-        else:
-            rows = fetch_mart_rows(
-                conn,
-                schema,
-                table,
-                codes,
-                category_name,
-                order_columns=order_columns,
-            )
-        if rows:
+    for table in probes:
+        if mart_has_rows(conn, schema, table, codes, category_name):
             return True
+    # Course notes: cheap existence via subquery LIMIT 1.
+    for _ in iter_course_note_rows(conn, schema, codes, category_name, chunk_size=1):
+        return True
     return False
 
 
@@ -864,9 +1077,8 @@ def build_workbook(
         else list(programme_codes)
     )
 
-    wb = Workbook()
-    default = wb.active
-    wb.remove(default)
+    # write_only streams rows to disk and avoids Cell objects for every value.
+    wb = Workbook(write_only=True)
 
     sheets: list[tuple[str, Any]] = [
         ("Programme Summary", write_programme_summary),
@@ -892,14 +1104,7 @@ def build_workbook(
             )
         else:
             writer(ws, conn, schema, export_codes, category_name)
-        prettify_sheet(ws)
-
-    if COURSE_NOTES_SHEET_TITLE[:31] not in wb.sheetnames:
-        ws = wb.create_sheet(title=COURSE_NOTES_SHEET_TITLE[:31])
-        write_gradebook_course_notes(
-            ws, conn, schema, export_codes, category_name
-        )
-        prettify_sheet(ws)
+        gc.collect()
 
     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
     file_code = display_programme_code or (
