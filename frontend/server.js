@@ -361,14 +361,23 @@ app.get("/api/programmes", async (req, res) => {
 
 app.post("/api/export-excel/start", async (req, res) => {
   const categoryName = String(req.body?.categoryName || "").trim();
-  const programmeCode = String(req.body?.programmeCode || "")
-    .trim()
-    .toUpperCase();
+  const rawCodes = Array.isArray(req.body?.programmeCodes)
+    ? req.body.programmeCodes
+    : req.body?.programmeCode
+      ? [req.body.programmeCode]
+      : [];
+  const programmeCodes = [
+    ...new Set(
+      rawCodes
+        .map((code) => String(code || "").trim().toUpperCase())
+        .filter(Boolean)
+    )
+  ];
 
-  if (!programmeCode || !categoryName) {
-    return res
-      .status(400)
-      .json({ error: "categoryName and programmeCode are required" });
+  if (!programmeCodes.length || !categoryName) {
+    return res.status(400).json({
+      error: "categoryName and at least one programmeCode/programmeCodes are required"
+    });
   }
   if (!motherduckToken) {
     return res.status(500).json({
@@ -387,43 +396,53 @@ app.post("/api/export-excel/start", async (req, res) => {
     startedAt,
     updatedAt: startedAt,
     categoryName,
-    programmeCode,
+    programmeCodes,
+    programmeCode: programmeCodes.length === 1 ? programmeCodes[0] : undefined,
     timingsMs: {}
   });
 
   (async () => {
     try {
       console.info(
-        `[export-job:${jobId}] programme=${programmeCode} category=${categoryName}`
+        `[export-job:${jobId}] programmes=${programmeCodes.join(",")} category=${categoryName}`
       );
       updateJob(jobId, {
         status: "running",
         stage: "excel",
-        message: "Building Excel from MotherDuck gradebook marts..."
+        message:
+          programmeCodes.length === 1
+            ? "Building Excel from MotherDuck gradebook marts..."
+            : `Building batch Excel for ${programmeCodes.length} programmes...`
       });
 
       const heartbeat = setInterval(() => {
         const elapsedSec = Math.round((Date.now() - startedAt) / 1000);
         updateJob(jobId, {
-          message: `Building Excel from MotherDuck gradebook marts... (${elapsedSec}s)`
+          message:
+            programmeCodes.length === 1
+              ? `Building Excel from MotherDuck gradebook marts... (${elapsedSec}s)`
+              : `Building batch Excel for ${programmeCodes.length} programmes... (${elapsedSec}s)`
         });
       }, 10000);
+
+      const pythonArgs = [
+        "populate_gradebook_from_warehouse.py",
+        "--category-name",
+        categoryName,
+        "--warehouse-schema",
+        warehouseSchema,
+        "--output-dir",
+        exportOutputDir
+      ];
+      for (const code of programmeCodes) {
+        pythonArgs.push("--programme-code", code);
+      }
 
       let exportResult;
       try {
         exportResult = await runProcess(
           pythonBin,
-          [
-            "populate_gradebook_from_warehouse.py",
-            "--programme-code",
-            programmeCode,
-            "--category-name",
-            categoryName,
-            "--warehouse-schema",
-            warehouseSchema,
-            "--output-dir",
-            exportOutputDir
-          ],
+          pythonArgs,
           projectRoot,
           motherduckEnv(),
           { logPrefix: `[export-job:${jobId}][excel]` }

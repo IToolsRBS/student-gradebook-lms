@@ -164,7 +164,9 @@ def build_workbook_offering_fallback(
     from populate_gradebook_from_warehouse import (
         COURSE_NOTES_SHEET_TITLE,
         MART_SHEET_HEADERS,
+        PROGRAMME_SUMMARY_HEADERS,
         add_header_only_sheet,
+        append_data_row,
         finish_sheet,
         format_cell,
         write_gradebook_course_notes,
@@ -183,29 +185,34 @@ def build_workbook_offering_fallback(
     wb = Workbook(write_only=True)
 
     ws_prog = wb.create_sheet(title="Programme Summary"[:31])
-    write_headers(ws_prog, ["Metric", "Value"])
-    prog_rows = [
-        ["Programme", display],
-        ["Students", len(students)],
-        ["Modules", len(modules)],
-        ["Grade records", "(see Student Assessment Detail)"],
+    write_headers(ws_prog, PROGRAMME_SUMMARY_HEADERS)
+    prog_values = [
+        format_cell(display),
+        format_cell(len(students)),
+        "",
+        format_cell(len(modules)),
+        "",
+        "",
+        "",
+        "",
+        "",
     ]
-    for row in prog_rows:
-        ws_prog.append(row)
-    finish_sheet(ws_prog, 2, len(prog_rows))
+    append_data_row(ws_prog, prog_values)
+    finish_sheet(ws_prog, len(PROGRAMME_SUMMARY_HEADERS), 1)
 
     ws_stu = wb.create_sheet(title="Student Summary"[:31])
-    stu_headers = ["Student No", "Student", "Email", "Programme", "Modules"]
+    stu_headers = ["Programme", "Student No", "Student", "Email", "Modules"]
     write_headers(ws_stu, stu_headers)
     for row in students:
-        ws_stu.append(
+        append_data_row(
+            ws_stu,
             [
+                format_cell(row.get("programme")),
                 format_cell(row.get("student_no")),
                 format_cell(row.get("student")),
                 format_cell(row.get("email")),
-                format_cell(row.get("programme")),
                 format_cell(row.get("modules")),
-            ]
+            ],
         )
     finish_sheet(ws_stu, len(stu_headers), len(students))
 
@@ -213,13 +220,14 @@ def build_workbook_offering_fallback(
     mod_headers = ["Programme", "Module Code", "Module", "Students"]
     write_headers(ws_mod, mod_headers)
     for row in modules:
-        ws_mod.append(
+        append_data_row(
+            ws_mod,
             [
                 format_cell(row.get("programme")),
                 format_cell(row.get("module_code")),
                 format_cell(row.get("module")),
                 format_cell(row.get("students")),
-            ]
+            ],
         )
     finish_sheet(ws_mod, len(mod_headers), len(modules))
 
@@ -237,9 +245,9 @@ def build_workbook_offering_fallback(
 
     ws_det = wb.create_sheet(title="Student Assessment Detail"[:31])
     det_headers = [
+        "Programme",
         "Student No",
         "Student",
-        "Programme",
         "Module Code",
         "Module",
         "Assessment",
@@ -251,11 +259,12 @@ def build_workbook_offering_fallback(
     write_headers(ws_det, det_headers)
     grade_count = 0
     for row in _iter_grade_rows(conn, course_ids, display):
-        ws_det.append(
+        append_data_row(
+            ws_det,
             [
+                format_cell(row.get("programme")),
                 format_cell(row.get("student_no")),
                 format_cell(row.get("student")),
-                format_cell(row.get("programme")),
                 format_cell(row.get("module_code")),
                 format_cell(row.get("module")),
                 format_cell(row.get("assessment")),
@@ -263,7 +272,7 @@ def build_workbook_offering_fallback(
                 format_cell(row.get("grade_percentage")),
                 format_cell(row.get("submitted_at")),
                 format_cell(row.get("graded_at")),
-            ]
+            ],
         )
         grade_count += 1
     finish_sheet(ws_det, len(det_headers), grade_count)

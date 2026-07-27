@@ -44,16 +44,17 @@
             <ul class="dropdown-menu" role="listbox" aria-label="Category options"></ul>
           </div>
 
-          <label for="programmeDropdownBtn">Programme</label>
-          <div class="custom-dropdown" data-dropdown="programme">
+          <label for="programmeDropdownBtn">Programme(s)</label>
+          <div class="custom-dropdown multi-select" data-dropdown="programme">
             <button
               id="programmeDropdownBtn"
               class="dropdown-trigger"
               type="button"
               aria-haspopup="listbox"
               aria-expanded="false"
+              aria-multiselectable="true"
             >
-              <span class="dropdown-value">Select programme</span>
+              <span class="dropdown-value">Select programme(s)</span>
               <span class="dropdown-arrow" aria-hidden="true"></span>
             </button>
             <input
@@ -62,7 +63,12 @@
               placeholder="Search programme..."
               aria-label="Search programme"
             />
-            <ul class="dropdown-menu" role="listbox" aria-label="Programme options"></ul>
+            <ul
+              class="dropdown-menu"
+              role="listbox"
+              aria-label="Programme options"
+              aria-multiselectable="true"
+            ></ul>
           </div>
         </div>
 

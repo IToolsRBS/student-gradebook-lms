@@ -80,10 +80,10 @@ MART_SHEET_HEADERS: dict[str, list[str]] = {
         "Late Submissions",
     ],
     "Missed Assessments": [
+        "Programme",
         "Student No",
         "Student",
         "Email",
-        "Programme",
         "Module Code",
         "Module",
         "Assessment",
@@ -107,6 +107,18 @@ MART_SHEET_HEADERS: dict[str, list[str]] = {
         "Hours Until Due",
     ],
 }
+
+PROGRAMME_SUMMARY_HEADERS: list[str] = [
+    "Programme",
+    "Students",
+    "Suspended Students",
+    "Active Modules",
+    "Submitted Assessments",
+    "Missed Assessments",
+    "Late Submissions",
+    "Upcoming Deadlines (14 Days)",
+    "Students With Missed Assessments",
+]
 
 # Per-mart programme/category filter columns (warehouse schema).
 # All gradebook marts are scoped by category_name (intake) + offering code.
@@ -212,6 +224,7 @@ def _format_sequence(value: Any) -> str:
 
 
 def format_cell(value: Any) -> Any:
+    """Normalise values for Excel while keeping dates/numbers typed."""
     if _is_missing(value):
         return ""
     if hasattr(value, "tolist") and not isinstance(value, (str, bytes, datetime, date)):
@@ -225,21 +238,72 @@ def format_cell(value: Any) -> Any:
             pass
         if _is_missing(value):
             return ""
+    if isinstance(value, bool):
+        return "Yes" if value else "No"
+    if isinstance(value, datetime):
+        return value
+    if isinstance(value, date):
+        return value
+    if isinstance(value, Decimal):
+        as_float = float(value)
+        if as_float.is_integer():
+            return int(as_float)
+        return as_float
+    if isinstance(value, float):
+        if value.is_integer():
+            return int(value)
+        return value
+    return value
+
+
+def _display_width_text(value: Any) -> str:
+    if value is None or value == "":
+        return ""
     if isinstance(value, datetime):
         try:
             t = value.time()
         except (ValueError, OSError):
             return ""
-        if t.hour or t.minute or t.second:
+        if t.hour or t.minute or t.second or t.microsecond:
             return value.strftime("%Y-%m-%d %H:%M:%S")
         return value.strftime("%Y-%m-%d")
     if isinstance(value, date):
         return value.strftime("%Y-%m-%d")
-    if isinstance(value, Decimal):
-        return float(value)
+    return str(value)
+
+
+def _excel_number_format(value: Any) -> str | None:
+    if isinstance(value, datetime):
+        try:
+            t = value.time()
+        except (ValueError, OSError):
+            return "YYYY-MM-DD"
+        if t.hour or t.minute or t.second or t.microsecond:
+            return "YYYY-MM-DD HH:MM:SS"
+        return "YYYY-MM-DD"
+    if isinstance(value, date):
+        return "YYYY-MM-DD"
     if isinstance(value, bool):
-        return "Yes" if value else "No"
-    return value
+        return None
+    if isinstance(value, int):
+        return "#,##0"
+    if isinstance(value, float):
+        return "#,##0.00"
+    return None
+
+
+def append_data_row(ws: Worksheet, values: Sequence[Any]) -> None:
+    """Append a data row with typed date/number Excel formats."""
+    cells: list[Any] = []
+    for value in values:
+        number_format = _excel_number_format(value)
+        if number_format is None:
+            cells.append(value)
+            continue
+        cell = WriteOnlyCell(ws, value=value)
+        cell.number_format = number_format
+        cells.append(cell)
+    ws.append(cells)
 
 
 _HEADER_FILL = PatternFill(fill_type="solid", fgColor="1F4E78")
@@ -289,7 +353,7 @@ def _update_col_widths(
         return
     sample_remaining[0] -= 1
     for idx, value in enumerate(values):
-        text = "" if value is None else str(value)
+        text = _display_width_text(value)
         length = min(len(text) + 2, MAX_COLUMN_WIDTH)
         if idx >= len(widths):
             widths.append(max(12, length))
@@ -318,7 +382,7 @@ def write_mapped_rows(
         row = normalize_row(raw)
         values = [format_cell(pick(row, *aliases)) for _, aliases in field_map]
         _update_col_widths(widths, values, sample_remaining)
-        ws.append(values)
+        append_data_row(ws, values)
         count += 1
     finish_sheet(ws, len(headers), count, widths)
     return count
@@ -568,30 +632,48 @@ def iter_course_note_rows(
         student_no_col = student_cols.get("student_no")
         if not student_no_col:
             return
-        query = f"""
-            SELECT n.*
-            FROM {relation} AS n
-            WHERE TRIM(CAST(n."{username_col}" AS VARCHAR)) IN (
-                SELECT TRIM(CAST(s."{student_no_col}" AS VARCHAR))
-                FROM ({student_sql}) AS s
-                WHERE TRIM(CAST(s."{student_no_col}" AS VARCHAR)) <> ''
-            )
-            ORDER BY 1
-        """
-        # Prefer timestamp ordering when available.
+        programme_col = (
+            student_cols.get("programme")
+            or student_cols.get("program_code")
+            or student_cols.get("course_prefix")
+        )
+        programme_select = (
+            f'CAST(s."{programme_col}" AS VARCHAR) AS programme'
+            if programme_col
+            else "CAST(NULL AS VARCHAR) AS programme"
+        )
+        student_base_sql = student_sql.rsplit(" ORDER BY ", 1)[0]
+        note_select_cols = ", ".join(
+            f'n."{col}"'
+            for key, col in note_cols.items()
+            if key != "programme"
+        )
         if "timestamp" in note_cols:
-            query = f"""
-                SELECT n.*
-                FROM {relation} AS n
-                WHERE TRIM(CAST(n."{username_col}" AS VARCHAR)) IN (
-                    SELECT TRIM(CAST(s."{student_no_col}" AS VARCHAR))
-                    FROM ({student_sql}) AS s
-                    WHERE TRIM(CAST(s."{student_no_col}" AS VARCHAR)) <> ''
-                )
-                ORDER BY n."{note_cols['timestamp']}" DESC,
-                         n."{username_col}",
-                         n."{note_cols.get('course_display_name', username_col)}"
-            """
+            order_sql = (
+                f's.programme, n."{note_cols["timestamp"]}" DESC, '
+                f'n."{username_col}", '
+                f'n."{note_cols.get("course_display_name", username_col)}"'
+            )
+        else:
+            order_sql = f's.programme, n."{username_col}"'
+        select_list = (
+            f"s.programme AS programme, {note_select_cols}"
+            if note_select_cols
+            else "s.programme AS programme"
+        )
+        query = f"""
+            SELECT {select_list}
+            FROM {relation} AS n
+            INNER JOIN (
+                SELECT
+                    TRIM(CAST(s."{student_no_col}" AS VARCHAR)) AS student_no,
+                    {programme_select}
+                FROM ({student_base_sql}) AS s
+                WHERE TRIM(CAST(s."{student_no_col}" AS VARCHAR)) <> ''
+            ) AS s
+                ON TRIM(CAST(n."{username_col}" AS VARCHAR)) = s.student_no
+            ORDER BY {order_sql}
+        """
         result = conn.execute(query, student_params)
         columns = [str(desc[0]) for desc in result.description]
         while True:
@@ -614,6 +696,7 @@ def fetch_course_note_rows(
         iter_course_note_rows(conn, schema, programme_codes, category_name)
     )
 
+
 def write_programme_summary(
     ws: Worksheet,
     conn: duckdb.DuckDBPyConnection,
@@ -622,26 +705,14 @@ def write_programme_summary(
     category_name: str | None,
     display_programme_code: str = "",
 ) -> None:
-    built = _build_mart_filter_sql(
-        conn,
-        schema,
-        TABLE_PROGRAMME,
-        programme_codes,
-        category_name,
-        limit=1,
-    )
-    summary: dict[str, Any] = {}
-    if built:
-        query, params = built
-        result = conn.execute(query, params)
-        columns = [str(desc[0]) for desc in result.description]
-        row = result.fetchone()
-        if row:
-            summary = normalize_row(dict(zip(columns, row)))
-    headers = ["Metric", "Value"]
+    """Write Programme Summary as a table: one row per programme."""
+    headers = list(PROGRAMME_SUMMARY_HEADERS)
     write_headers(ws, headers)
-    metrics: list[tuple[str, tuple[str, ...]]] = [
-        ("Programme", ("programme",)),
+    widths = [max(12, min(len(h) + 2, MAX_COLUMN_WIDTH)) for h in headers]
+    sample_remaining = [COLUMN_WIDTH_SAMPLE_ROWS]
+
+    metric_aliases: list[tuple[str, tuple[str, ...]]] = [
+        ("Programme", ("programme", "program_code")),
         ("Students", ("students",)),
         ("Suspended Students", ("suspended_students", "suspended_student_count")),
         ("Active Modules", ("active_modules",)),
@@ -651,20 +722,82 @@ def write_programme_summary(
         ("Upcoming Deadlines (14 Days)", ("upcoming_deadlines_14_days",)),
         ("Students With Missed Assessments", ("students_with_missed_assessments",)),
     ]
-    widths = [max(12, min(len(h) + 2, MAX_COLUMN_WIDTH)) for h in headers]
-    sample_remaining = [COLUMN_WIDTH_SAMPLE_ROWS]
-    for label, aliases in metrics:
-        value = pick(summary, *aliases)
-        if label == "Suspended Students" and value == "":
-            value = count_suspended_students(
-                conn, schema, programme_codes, category_name
-            )
-        if label == "Programme" and not value:
-            value = display_programme_code or (programme_codes[0] if programme_codes else "")
-        values = [label, format_cell(value)]
+
+    rows = list(
+        iter_mart_rows(
+            conn,
+            schema,
+            TABLE_PROGRAMME,
+            programme_codes,
+            category_name,
+            order_columns=["programme"],
+        )
+    )
+
+    # Ensure every selected programme appears, even if mart summary is missing.
+    seen_codes: set[str] = set()
+    count = 0
+    for raw in rows:
+        row = normalize_row(raw)
+        programme_value = pick(row, "programme", "program_code")
+        programme_code = str(programme_value or "").strip().upper()
+        if programme_code:
+            seen_codes.add(programme_code)
+        values: list[Any] = []
+        for label, aliases in metric_aliases:
+            value = pick(row, *aliases)
+            if label == "Suspended Students" and value == "":
+                value = count_suspended_students(
+                    conn,
+                    schema,
+                    [programme_code] if programme_code else programme_codes,
+                    category_name,
+                )
+            if label == "Programme" and not value:
+                value = (
+                    display_programme_code
+                    or programme_code
+                    or (programme_codes[0] if programme_codes else "")
+                )
+            values.append(format_cell(value))
         _update_col_widths(widths, values, sample_remaining)
-        ws.append(values)
-    finish_sheet(ws, len(headers), len(metrics), widths)
+        append_data_row(ws, values)
+        count += 1
+
+    for code in programme_codes:
+        code_norm = str(code).strip().upper()
+        if not code_norm or code_norm in seen_codes:
+            continue
+        suspended = count_suspended_students(
+            conn, schema, [code_norm], category_name
+        )
+        values = [
+            format_cell(code_norm),
+            "",
+            format_cell(suspended),
+            "",
+            "",
+            "",
+            "",
+            "",
+            "",
+        ]
+        _update_col_widths(widths, values, sample_remaining)
+        append_data_row(ws, values)
+        count += 1
+
+    if count == 0 and (display_programme_code or programme_codes):
+        code = (
+            display_programme_code.strip().upper()
+            if display_programme_code
+            else str(programme_codes[0]).strip().upper()
+        )
+        values = [format_cell(code), "", "", "", "", "", "", "", ""]
+        _update_col_widths(widths, values, sample_remaining)
+        append_data_row(ws, values)
+        count = 1
+
+    finish_sheet(ws, len(headers), count, widths)
 
 
 def write_student_summary(
@@ -675,11 +808,11 @@ def write_student_summary(
     category_name: str | None,
 ) -> None:
     headers = [
+        "Programme",
         "Student No",
         "Student",
         "Email",
         "Status",
-        "Programme",
         "Modules",
         "Missed Submissions",
         "Late Submissions",
@@ -689,11 +822,11 @@ def write_student_summary(
         *[label for label, _ in NOTE_FIELD_MAP],
     ]
     field_map: list[tuple[str, tuple[str, ...]]] = [
+        ("Programme", ("programme", "program_code")),
         ("Student No", ("student_no",)),
         ("Student", ("student",)),
         ("Email", ("email",)),
         ("Status", ("status",)),
-        ("Programme", ("programme",)),
         ("Modules", ("total_modules", "modules")),
         ("Missed Submissions", ("missed_submissions", "missed")),
         ("Late Submissions", ("late_submissions", "late")),
@@ -710,7 +843,7 @@ def write_student_summary(
             TABLE_STUDENT,
             programme_codes,
             category_name,
-            order_columns=["student_no"],
+            order_columns=["programme", "student_no"],
         ),
         headers,
         field_map,
@@ -735,7 +868,7 @@ def write_module_summary(
         "Upcoming",
     ]
     field_map = [
-        ("Programme", ("programme",)),
+        ("Programme", ("programme", "program_code")),
         ("Module Code", ("module_code",)),
         ("Module", ("module",)),
         ("Students", ("students",)),
@@ -752,7 +885,7 @@ def write_module_summary(
             TABLE_MODULE,
             programme_codes,
             category_name,
-            order_columns=["module_code", "module"],
+            order_columns=["programme", "module_code", "module"],
         ),
         headers,
         field_map,
@@ -779,7 +912,7 @@ def write_submission_trends(
         "Late Submissions",
     ]
     field_map = [
-        ("Programme", ("programme",)),
+        ("Programme", ("programme", "program_code")),
         ("Module Code", ("module_code",)),
         ("Module", ("module",)),
         ("Assessment", ("assessment",)),
@@ -798,7 +931,7 @@ def write_submission_trends(
             TABLE_TRENDS,
             programme_codes,
             category_name,
-            order_columns=["module_code", "assessment"],
+            order_columns=["programme", "module_code", "assessment"],
         ),
         headers,
         field_map,
@@ -813,10 +946,10 @@ def write_student_assessment_detail(
     category_name: str | None,
 ) -> None:
     headers = [
+        "Programme",
         "Student No",
         "Student",
         "Email",
-        "Programme",
         "Module Code",
         "Module",
         "Assessment",
@@ -838,7 +971,13 @@ def write_student_assessment_detail(
         TABLE_ASSESSMENT,
         programme_codes,
         category_name,
-        order_columns=["course_shortname", "assessment_name", "user_idnumber"],
+        order_columns=[
+            "programme",
+            "course_prefix",
+            "course_shortname",
+            "assessment_name",
+            "user_idnumber",
+        ],
     ):
         row = normalize_row(raw)
         submitted = pick(row, "grade_submitted_at", "last_attempt_at")
@@ -851,10 +990,10 @@ def write_student_assessment_detail(
         }:
             submitted = ""
         values = [
+            format_cell(pick(row, "programme", "course_prefix", "program_code")),
             format_cell(pick(row, "user_idnumber")),
             format_cell(pick(row, "user_fullname")),
             format_cell(pick(row, "user_email")),
-            format_cell(pick(row, "program_code")),
             format_cell(pick(row, "course_shortname")),
             format_cell(pick(row, "course_fullname")),
             format_cell(pick(row, "assessment_name")),
@@ -867,7 +1006,7 @@ def write_student_assessment_detail(
             *[format_cell(pick(row, *aliases)) for _, aliases in NOTE_FIELD_MAP],
         ]
         _update_col_widths(widths, values, sample_remaining)
-        ws.append(values)
+        append_data_row(ws, values)
         count += 1
     finish_sheet(ws, len(headers), count, widths)
 
@@ -880,10 +1019,10 @@ def write_missed_assessments(
     category_name: str | None,
 ) -> None:
     headers = [
+        "Programme",
         "Student No",
         "Student",
         "Email",
-        "Programme",
         "Module Code",
         "Module",
         "Assessment",
@@ -895,10 +1034,10 @@ def write_missed_assessments(
         *[label for label, _ in NOTE_FIELD_MAP],
     ]
     field_map = [
+        ("Programme", ("programme", "program_code")),
         ("Student No", ("student_no",)),
         ("Student", ("student",)),
         ("Email", ("email",)),
-        ("Programme", ("programme",)),
         ("Module Code", ("module_code",)),
         ("Module", ("module",)),
         ("Assessment", ("assessment",)),
@@ -917,7 +1056,7 @@ def write_missed_assessments(
             TABLE_MISSED,
             programme_codes,
             category_name,
-            order_columns=["days_overdue", "student_no"],
+            order_columns=["programme", "days_overdue", "student_no"],
         ),
         headers,
         field_map,
@@ -931,19 +1070,27 @@ def write_gradebook_course_notes(
     programme_codes: Sequence[str],
     category_name: str | None,
 ) -> None:
-    columns = _course_notes_table_columns(conn, schema)
-    write_headers(ws, columns)
-    widths = [max(12, min(len(h) + 2, MAX_COLUMN_WIDTH)) for h in columns]
+    note_columns = _course_notes_table_columns(conn, schema)
+    # Programme first for filtering; avoid duplicating if the mart already has it.
+    note_columns_no_prog = [
+        col for col in note_columns if str(col).lower() != "programme"
+    ]
+    headers = ["Programme", *note_columns_no_prog]
+    write_headers(ws, headers)
+    widths = [max(12, min(len(h) + 2, MAX_COLUMN_WIDTH)) for h in headers]
     sample_remaining = [COLUMN_WIDTH_SAMPLE_ROWS]
     count = 0
     for raw in iter_course_note_rows(
         conn, schema, programme_codes, category_name
     ):
-        values = [format_cell(raw.get(col)) for col in columns]
+        row_norm = normalize_row(raw)
+        values = [format_cell(pick(row_norm, "programme"))]
+        for col in note_columns_no_prog:
+            values.append(format_cell(row_norm.get(str(col).lower(), raw.get(col))))
         _update_col_widths(widths, values, sample_remaining)
-        ws.append(values)
+        append_data_row(ws, values)
         count += 1
-    finish_sheet(ws, len(columns), count, widths)
+    finish_sheet(ws, len(headers), count, widths)
 
 
 def write_upcoming_deadlines(
@@ -963,7 +1110,7 @@ def write_upcoming_deadlines(
         "Hours Until Due",
     ]
     field_map = [
-        ("Programme", ("programme",)),
+        ("Programme", ("programme", "program_code")),
         ("Module Code", ("module_code",)),
         ("Module", ("module",)),
         ("Assessment", ("assessment",)),
@@ -979,7 +1126,7 @@ def write_upcoming_deadlines(
             TABLE_UPCOMING,
             programme_codes,
             category_name,
-            order_columns=["hours_until_due", "effective_deadline_at"],
+            order_columns=["programme", "hours_until_due", "effective_deadline_at"],
         ),
         headers,
         field_map,
@@ -1049,33 +1196,38 @@ def build_workbook(
     output_dir: Path,
     display_programme_code: str = "",
 ) -> Path:
+    codes = _export_codes_for_check(programme_codes, display_programme_code)
+    single_display = (
+        display_programme_code.strip().upper()
+        if display_programme_code
+        else (codes[0] if len(codes) == 1 else "")
+    )
+
+    # Fallback remains single-programme only (multi-programme uses mart combine path).
     if (
         _export_fallback_enabled()
         and category_name
-        and display_programme_code
+        and single_display
+        and len(codes) <= 1
         and not offering_has_gradebook_rows(
             conn,
             schema,
-            programme_codes,
+            codes,
             category_name,
-            display_programme_code=display_programme_code,
+            display_programme_code=single_display,
         )
     ):
         return build_workbook_offering_fallback(
             conn,
             category_name,
-            display_programme_code,
+            single_display,
             output_dir,
-            display_programme_code,
+            single_display,
             schema=schema,
-            programme_codes=programme_codes,
+            programme_codes=codes,
         )
 
-    export_codes = (
-        [display_programme_code.strip().upper()]
-        if display_programme_code
-        else list(programme_codes)
-    )
+    export_codes = codes or list(programme_codes)
 
     # write_only streams rows to disk and avoids Cell objects for every value.
     wb = Workbook(write_only=True)
@@ -1100,16 +1252,18 @@ def build_workbook(
                 schema,
                 export_codes,
                 category_name,
-                display_programme_code=display_programme_code,
+                display_programme_code=single_display,
             )
         else:
             writer(ws, conn, schema, export_codes, category_name)
         gc.collect()
 
     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-    file_code = display_programme_code or (
-        programme_codes[0] if programme_codes else "export"
-    )
+    if len(export_codes) == 1:
+        file_code = export_codes[0]
+    else:
+        joined = "_".join(export_codes)
+        file_code = joined if len(joined) <= 48 else f"batch_{len(export_codes)}prog"
     safe_code = file_code.replace(" ", "_")
     out_path = output_dir / f"gradebook_{safe_code}_{timestamp}.xlsx"
     wb.save(out_path)
@@ -1120,7 +1274,13 @@ def main() -> None:
     parser = argparse.ArgumentParser(
         description="Export gradebook Excel from warehouse moodle_processed marts"
     )
-    parser.add_argument("--programme-code", required=True)
+    parser.add_argument(
+        "--programme-code",
+        action="append",
+        dest="programme_codes",
+        required=True,
+        help="Programme code to include (repeat for multi-programme batch export)",
+    )
     parser.add_argument(
         "--category-name",
         default="",
@@ -1138,7 +1298,16 @@ def main() -> None:
     )
     args = parser.parse_args()
 
-    programme_code = str(args.programme_code).strip().upper()
+    seen: set[str] = set()
+    programme_codes: list[str] = []
+    for raw in args.programme_codes or []:
+        code = str(raw).strip().upper()
+        if code and code not in seen:
+            seen.add(code)
+            programme_codes.append(code)
+    if not programme_codes:
+        raise SystemExit("At least one --programme-code is required")
+
     category_name = str(args.category_name or "").strip() or None
     schema = args.warehouse_schema or gradebook_schema() or DEFAULT_SCHEMA
     output_dir = Path(args.output_dir)
@@ -1146,14 +1315,13 @@ def main() -> None:
 
     conn = connect_motherduck()
     try:
-        programme_codes = [programme_code]
         out_path = build_workbook(
             conn,
             schema,
             programme_codes,
             category_name,
             output_dir,
-            display_programme_code=programme_code,
+            display_programme_code=programme_codes[0] if len(programme_codes) == 1 else "",
         )
     except Exception:
         import traceback

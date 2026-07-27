@@ -145,6 +145,250 @@ function initCustomDropdown(dropdownEl, placeholder) {
   };
 }
 
+function initMultiSelectDropdown(dropdownEl, placeholder) {
+  const trigger = dropdownEl.querySelector(".dropdown-trigger");
+  const valueEl = dropdownEl.querySelector(".dropdown-value");
+  const menu = dropdownEl.querySelector(".dropdown-menu");
+  const searchInput = dropdownEl.querySelector(".dropdown-search");
+  let options = [];
+  let filteredOptions = options;
+  let selectedValues = new Set();
+  let onSelect = null;
+  let loading = false;
+  let disabled = false;
+
+  function selectableOptions() {
+    return options.filter((option) => option.value);
+  }
+
+  function formatTriggerLabel() {
+    const selected = selectableOptions().filter((option) =>
+      selectedValues.has(option.value)
+    );
+    if (!selected.length) return placeholder;
+    if (selected.length === 1) return selected[0].label;
+    if (selected.length === selectableOptions().length) {
+      return `All programmes (${selected.length})`;
+    }
+    return `${selected.length} programmes selected`;
+  }
+
+  function updateTrigger() {
+    valueEl.textContent = formatTriggerLabel();
+  }
+
+  function notifyChange() {
+    if (typeof onSelect === "function") {
+      onSelect(getValues());
+    }
+  }
+
+  function toggleValue(value) {
+    if (!value) return;
+    if (selectedValues.has(value)) selectedValues.delete(value);
+    else selectedValues.add(value);
+    updateTrigger();
+    renderOptions();
+    notifyChange();
+  }
+
+  function setAllSelected(selectAll) {
+    selectedValues = new Set();
+    if (selectAll) {
+      selectableOptions().forEach((option) => selectedValues.add(option.value));
+    }
+    updateTrigger();
+    renderOptions();
+    notifyChange();
+  }
+
+  function close() {
+    if (disabled) return;
+    dropdownEl.classList.remove("open");
+    trigger?.setAttribute("aria-expanded", "false");
+    if (searchInput) searchInput.value = "";
+    filteredOptions = options;
+    renderOptions();
+  }
+
+  function renderOptions() {
+    menu.innerHTML = "";
+    if (disabled) return;
+    if (loading) {
+      const item = document.createElement("li");
+      item.className = "dropdown-option loading";
+      item.textContent = "Loading programmes...";
+      menu.appendChild(item);
+      return;
+    }
+    if (!options.length) {
+      const item = document.createElement("li");
+      item.className = "dropdown-option empty";
+      item.textContent = "No programmes available";
+      menu.appendChild(item);
+      return;
+    }
+
+    const selectable = selectableOptions();
+    if (selectable.length) {
+      const allSelected =
+        selectable.length > 0 &&
+        selectable.every((option) => selectedValues.has(option.value));
+      const action = document.createElement("li");
+      action.className = "dropdown-option action-row";
+      action.setAttribute("role", "option");
+      const actionRow = document.createElement("div");
+      actionRow.className = "dropdown-option-row";
+      const actionCheckbox = document.createElement("input");
+      actionCheckbox.type = "checkbox";
+      actionCheckbox.className = "dropdown-checkbox";
+      actionCheckbox.checked = allSelected;
+      actionCheckbox.indeterminate =
+        !allSelected &&
+        selectable.some((option) => selectedValues.has(option.value));
+      actionCheckbox.addEventListener("click", (event) => {
+        event.stopPropagation();
+      });
+      actionCheckbox.addEventListener("change", () => {
+        setAllSelected(actionCheckbox.checked);
+      });
+      const actionLabel = document.createElement("span");
+      actionLabel.className = "dropdown-option-label";
+      actionLabel.textContent = allSelected ? "Clear all" : "Select all";
+      actionRow.appendChild(actionCheckbox);
+      actionRow.appendChild(actionLabel);
+      action.appendChild(actionRow);
+      action.addEventListener("click", (event) => {
+        event.preventDefault();
+        setAllSelected(!allSelected);
+      });
+      menu.appendChild(action);
+    }
+
+    if (!filteredOptions.length) {
+      const item = document.createElement("li");
+      item.className = "dropdown-option empty";
+      item.textContent = "No matches found";
+      menu.appendChild(item);
+      return;
+    }
+
+    filteredOptions.forEach((option) => {
+      if (!option.value) return;
+      const item = document.createElement("li");
+      const isSelected = selectedValues.has(option.value);
+      item.className = "dropdown-option";
+      if (isSelected) item.classList.add("selected");
+      item.setAttribute("role", "option");
+      item.setAttribute("aria-selected", isSelected ? "true" : "false");
+
+      const row = document.createElement("div");
+      row.className = "dropdown-option-row";
+      const checkbox = document.createElement("input");
+      checkbox.type = "checkbox";
+      checkbox.className = "dropdown-checkbox";
+      checkbox.checked = isSelected;
+      checkbox.addEventListener("click", (event) => {
+        event.stopPropagation();
+      });
+      checkbox.addEventListener("change", () => {
+        toggleValue(option.value);
+      });
+      const label = document.createElement("span");
+      label.className = "dropdown-option-label";
+      label.textContent = option.label;
+      row.appendChild(checkbox);
+      row.appendChild(label);
+      item.appendChild(row);
+      item.addEventListener("click", (event) => {
+        event.preventDefault();
+        toggleValue(option.value);
+      });
+      menu.appendChild(item);
+    });
+  }
+
+  function getValues() {
+    return selectableOptions()
+      .filter((option) => selectedValues.has(option.value))
+      .map((option) => option.value);
+  }
+
+  trigger?.addEventListener("click", () => {
+    if (disabled) return;
+    const isOpen = dropdownEl.classList.contains("open");
+    document.querySelectorAll(".custom-dropdown.open").forEach((openEl) => {
+      if (openEl === dropdownEl) return;
+      openEl.classList.remove("open");
+      const openTrigger = openEl.querySelector(".dropdown-trigger");
+      openTrigger?.setAttribute("aria-expanded", "false");
+    });
+    if (!isOpen) {
+      dropdownEl.classList.add("open");
+      trigger.setAttribute("aria-expanded", "true");
+      if (searchInput) searchInput.focus();
+      renderOptions();
+    } else {
+      close();
+    }
+  });
+
+  document.addEventListener("click", (event) => {
+    if (!dropdownEl.contains(event.target)) close();
+  });
+
+  document.addEventListener("keydown", (event) => {
+    if (event.key === "Escape") close();
+  });
+
+  searchInput?.addEventListener("input", () => {
+    if (disabled) return;
+    const term = searchInput.value.trim().toLowerCase();
+    filteredOptions = options.filter((option) =>
+      option.label.toLowerCase().includes(term)
+    );
+    renderOptions();
+  });
+
+  valueEl.textContent = placeholder;
+  renderOptions();
+
+  return {
+    setOptions(nextOptions, nextPlaceholder = placeholder) {
+      options = [...(nextOptions || [])];
+      filteredOptions = options;
+      selectedValues = new Set();
+      placeholder = nextPlaceholder;
+      valueEl.textContent = placeholder;
+      loading = false;
+      renderOptions();
+    },
+    setLoading(isLoading) {
+      loading = isLoading;
+      dropdownEl.classList.toggle("loading", loading);
+      renderOptions();
+    },
+    setDisabled(isDisabled) {
+      disabled = Boolean(isDisabled);
+      dropdownEl.classList.toggle("disabled", disabled);
+      if (disabled) {
+        selectedValues = new Set();
+        valueEl.textContent = placeholder;
+        close();
+      }
+      renderOptions();
+    },
+    onChange(handler) {
+      onSelect = handler;
+    },
+    getValues,
+    getValue() {
+      const values = getValues();
+      return values.length === 1 ? values[0] : "";
+    }
+  };
+}
+
 async function readResponseJson(response) {
   if (response.status === 401) {
     window.location.href = "/auth/login";
@@ -245,7 +489,7 @@ async function loadCategories(categoryDropdown) {
 
 async function loadProgrammes(programmeDropdown, categoryName) {
   if (!categoryName) {
-    programmeDropdown.setOptions([], "Select programme");
+    programmeDropdown.setOptions([], "Select programme(s)");
     return;
   }
   programmeDropdown.setLoading(true);
@@ -258,7 +502,7 @@ async function loadProgrammes(programmeDropdown, categoryName) {
         const code = p.programme_code;
         return { value: code, label: code };
       }),
-      "Select programme"
+      "Select programme(s)"
     );
   } finally {
     programmeDropdown.setLoading(false);
@@ -284,13 +528,16 @@ loadSignedInUser();
 const categoryDropdownEl = document.querySelector('[data-dropdown="category"]');
 const programmeDropdownEl = document.querySelector('[data-dropdown="programme"]');
 const categoryDropdown = initCustomDropdown(categoryDropdownEl, "Select category");
-const programmeDropdown = initCustomDropdown(programmeDropdownEl, "Select programme");
+const programmeDropdown = initMultiSelectDropdown(
+  programmeDropdownEl,
+  "Select programme(s)"
+);
 programmeDropdown.setDisabled(true);
 
 categoryDropdown.onChange(async (option) => {
   if (!option.value) {
     programmeDropdown.setDisabled(true);
-    programmeDropdown.setOptions([], "Select programme");
+    programmeDropdown.setOptions([], "Select programme(s)");
     return;
   }
   programmeDropdown.setDisabled(false);
@@ -303,9 +550,9 @@ loadCategories(categoryDropdown).catch((error) => {
 
 exportBtn?.addEventListener("click", async () => {
   const categoryName = categoryDropdown.getValue();
-  const programmeCode = programmeDropdown.getValue();
-  if (!categoryName || !programmeCode) {
-    window.alert("Select category and programme first.");
+  const programmeCodes = programmeDropdown.getValues();
+  if (!categoryName || !programmeCodes.length) {
+    window.alert("Select a category and at least one programme first.");
     return;
   }
   const originalText = exportBtn.textContent;
@@ -313,7 +560,12 @@ exportBtn?.addEventListener("click", async () => {
   let elapsedTicker = null;
   exportBtn.disabled = true;
   exportBtn.textContent = "Starting...";
-  if (exportStatusEl) exportStatusEl.textContent = "Starting export job...";
+  if (exportStatusEl) {
+    exportStatusEl.textContent =
+      programmeCodes.length === 1
+        ? "Starting export job..."
+        : `Starting batch export for ${programmeCodes.length} programmes...`;
+  }
   setProgressUi({
     visible: true,
     stage: "queued",
@@ -330,7 +582,8 @@ exportBtn?.addEventListener("click", async () => {
       credentials: "same-origin",
       body: JSON.stringify({
         categoryName,
-        programmeCode
+        programmeCodes,
+        programmeCode: programmeCodes.length === 1 ? programmeCodes[0] : undefined
       })
     });
     const startPayload = await readResponseJson(startResponse);
@@ -391,7 +644,11 @@ exportBtn?.addEventListener("click", async () => {
     const downloadUrl = URL.createObjectURL(blob);
     const a = document.createElement("a");
     a.href = downloadUrl;
-    a.download = latestJob?.fileName || `gradebook_${programmeCode}_${Date.now()}.xlsx`;
+    const fallbackName =
+      programmeCodes.length === 1
+        ? `gradebook_${programmeCodes[0]}_${Date.now()}.xlsx`
+        : `gradebook_batch_${programmeCodes.length}prog_${Date.now()}.xlsx`;
+    a.download = latestJob?.fileName || fallbackName;
     document.body.appendChild(a);
     a.click();
     a.remove();
