@@ -223,6 +223,25 @@ def _format_sequence(value: Any) -> str:
     return ", ".join(parts)
 
 
+def _excel_safe_datetime(value: datetime) -> datetime:
+    """Excel/openpyxl reject timezone-aware datetimes — strip tzinfo."""
+    if getattr(value, "tzinfo", None) is not None:
+        try:
+            return value.replace(tzinfo=None)
+        except (TypeError, ValueError, OSError):
+            # Fall back to naive wall-clock components if replace fails.
+            return datetime(
+                value.year,
+                value.month,
+                value.day,
+                value.hour,
+                value.minute,
+                value.second,
+                value.microsecond,
+            )
+    return value
+
+
 def format_cell(value: Any) -> Any:
     """Normalise values for Excel while keeping dates/numbers typed."""
     if _is_missing(value):
@@ -241,7 +260,7 @@ def format_cell(value: Any) -> Any:
     if isinstance(value, bool):
         return "Yes" if value else "No"
     if isinstance(value, datetime):
-        return value
+        return _excel_safe_datetime(value)
     if isinstance(value, date):
         return value
     if isinstance(value, Decimal):
