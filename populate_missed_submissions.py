@@ -79,13 +79,14 @@ DETAIL_HEADERS: list[str] = [
     "Effective Deadline",
     "Days Overdue",
     "Status",
+    "Mark Status",
     *[label for label, _ in NOTE_FIELD_MAP],
 ]
 
 DETAIL_FIELD_MAP: list[tuple[str, tuple[str, ...]]] = [
     ("Category", ("category_name",)),
     ("Programme", ("programme", "program_code")),
-    ("Student No", ("student_no", "user_idnumber")),
+    ("Student No", ("student_no",)),
     ("Student", ("student", "user_fullname")),
     ("Email", ("email", "user_email")),
     ("Module Code", ("module_code", "course_shortname")),
@@ -96,6 +97,7 @@ DETAIL_FIELD_MAP: list[tuple[str, tuple[str, ...]]] = [
     ("Effective Deadline", ("effective_deadline_at", "due_date", "due_at")),
     ("Days Overdue", ("days_overdue",)),
     ("Status", ("status",)),
+    ("Mark Status", ("mark_status",)),
     *NOTE_FIELD_MAP,
 ]
 

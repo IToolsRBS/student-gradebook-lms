@@ -92,6 +92,7 @@ MART_SHEET_HEADERS: dict[str, list[str]] = {
         "Effective Deadline",
         "Days Overdue",
         "Status",
+        "Mark Status",
         "Latest note",
         "Note timestamp",
         "Note created by",
@@ -600,6 +601,69 @@ def count_suspended_students(
     return int(row[0] or 0) if row else 0
 
 
+def count_submitted_late_by_keys(
+    conn: duckdb.DuckDBPyConnection,
+    schema: str,
+    programme_codes: Sequence[str],
+    category_name: str | None,
+    group_key_candidates: Sequence[Sequence[str]],
+) -> dict[tuple[str, ...], int]:
+    """
+    Count assessment-detail rows where status = 'submitted_late', grouped by keys.
+
+    group_key_candidates: for each group dimension, ordered column-name candidates
+    (first present column wins), e.g. (("programme", "course_prefix"), ("student_no",)).
+    """
+    built = _build_mart_filter_sql(
+        conn,
+        schema,
+        TABLE_ASSESSMENT,
+        programme_codes,
+        category_name,
+        order_columns=None,
+    )
+    if not built:
+        return {}
+    base_query, params = built
+    try:
+        mart_cols = _mart_columns(conn, schema, TABLE_ASSESSMENT)
+    except duckdb.CatalogException:
+        return {}
+
+    status_col = _pick_first_mart_column(mart_cols, ("status",))
+    if not status_col:
+        return {}
+
+    group_cols: list[str] = []
+    for candidates in group_key_candidates:
+        col = _pick_first_mart_column(mart_cols, candidates)
+        if not col:
+            return {}
+        group_cols.append(col)
+
+    base_no_order = base_query.rsplit(" ORDER BY ", 1)[0]
+    select_keys = ", ".join(f'"{c}"' for c in group_cols)
+    group_sql = ", ".join(f'"{c}"' for c in group_cols)
+    query = f"""
+        SELECT {select_keys}, COUNT(*) AS late_count
+        FROM ({base_no_order}) AS _detail
+        WHERE LOWER(REPLACE(REPLACE(TRIM(CAST("{status_col}" AS VARCHAR)),
+              ' ', '_'), '-', '_')) = 'submitted_late'
+        GROUP BY {group_sql}
+    """
+    try:
+        rows = conn.execute(query, params).fetchall()
+    except Exception:
+        return {}
+
+    out: dict[tuple[str, ...], int] = {}
+    for tup in rows:
+        *keys, count = tup
+        key = tuple(str(k or "").strip().upper() for k in keys)
+        out[key] = int(count or 0)
+    return out
+
+
 def _course_notes_table_columns(
     conn: duckdb.DuckDBPyConnection, schema: str
 ) -> list[str]:
@@ -752,6 +816,13 @@ def write_programme_summary(
             order_columns=["programme"],
         )
     )
+    late_by_programme = count_submitted_late_by_keys(
+        conn,
+        schema,
+        programme_codes,
+        category_name,
+        (("programme", "course_prefix", "program_code"),),
+    )
 
     # Ensure every selected programme appears, even if mart summary is missing.
     seen_codes: set[str] = set()
@@ -772,6 +843,10 @@ def write_programme_summary(
                     [programme_code] if programme_code else programme_codes,
                     category_name,
                 )
+            if label == "Late Submissions":
+                value = late_by_programme.get(
+                    (programme_code,), value if value != "" else 0
+                )
             if label == "Programme" and not value:
                 value = (
                     display_programme_code
@@ -790,6 +865,7 @@ def write_programme_summary(
         suspended = count_suspended_students(
             conn, schema, [code_norm], category_name
         )
+        late = late_by_programme.get((code_norm,), 0)
         values = [
             format_cell(code_norm),
             "",
@@ -797,7 +873,7 @@ def write_programme_summary(
             "",
             "",
             "",
-            "",
+            format_cell(late),
             "",
             "",
         ]
@@ -832,6 +908,7 @@ def write_student_summary(
         "Student",
         "Email",
         "Status",
+        "Mark Status",
         "Modules",
         "Missed Submissions",
         "Late Submissions",
@@ -846,6 +923,7 @@ def write_student_summary(
         ("Student", ("student",)),
         ("Email", ("email",)),
         ("Status", ("status",)),
+        ("Mark Status", ("mark_status",)),
         ("Modules", ("total_modules", "modules")),
         ("Missed Submissions", ("missed_submissions", "missed")),
         ("Late Submissions", ("late_submissions", "late")),
@@ -854,19 +932,41 @@ def write_student_summary(
         ("Days Since Access", ("days_since_access",)),
         *NOTE_FIELD_MAP,
     ]
-    write_mapped_rows(
-        ws,
-        iter_mart_rows(
-            conn,
-            schema,
-            TABLE_STUDENT,
-            programme_codes,
-            category_name,
-            order_columns=["programme", "student_no"],
+    late_by_student = count_submitted_late_by_keys(
+        conn,
+        schema,
+        programme_codes,
+        category_name,
+        (
+            ("programme", "course_prefix", "program_code"),
+            ("student_no",),
         ),
-        headers,
-        field_map,
     )
+    write_headers(ws, headers)
+    widths = [max(12, min(len(h) + 2, MAX_COLUMN_WIDTH)) for h in headers]
+    sample_remaining = [COLUMN_WIDTH_SAMPLE_ROWS]
+    count = 0
+    for raw in iter_mart_rows(
+        conn,
+        schema,
+        TABLE_STUDENT,
+        programme_codes,
+        category_name,
+        order_columns=["programme", "student_no"],
+    ):
+        row = normalize_row(raw)
+        values: list[Any] = []
+        for label, aliases in field_map:
+            value = pick(row, *aliases)
+            if label == "Late Submissions":
+                prog = str(pick(row, "programme", "program_code") or "").strip().upper()
+                student_no = str(pick(row, "student_no") or "").strip().upper()
+                value = late_by_student.get((prog, student_no), value if value != "" else 0)
+            values.append(format_cell(value))
+        _update_col_widths(widths, values, sample_remaining)
+        append_data_row(ws, values)
+        count += 1
+    finish_sheet(ws, len(headers), count, widths)
 
 
 def write_module_summary(
@@ -896,19 +996,45 @@ def write_module_summary(
         ("Late Submissions", ("late_submissions", "late")),
         ("Upcoming", ("upcoming_assessments", "upcoming")),
     ]
-    write_mapped_rows(
-        ws,
-        iter_mart_rows(
-            conn,
-            schema,
-            TABLE_MODULE,
-            programme_codes,
-            category_name,
-            order_columns=["programme", "module_code", "module"],
+    late_by_module = count_submitted_late_by_keys(
+        conn,
+        schema,
+        programme_codes,
+        category_name,
+        (
+            ("programme", "course_prefix", "program_code"),
+            ("course_shortname", "module_code"),
         ),
-        headers,
-        field_map,
     )
+    write_headers(ws, headers)
+    widths = [max(12, min(len(h) + 2, MAX_COLUMN_WIDTH)) for h in headers]
+    sample_remaining = [COLUMN_WIDTH_SAMPLE_ROWS]
+    count = 0
+    for raw in iter_mart_rows(
+        conn,
+        schema,
+        TABLE_MODULE,
+        programme_codes,
+        category_name,
+        order_columns=["programme", "module_code", "module"],
+    ):
+        row = normalize_row(raw)
+        values: list[Any] = []
+        for label, aliases in field_map:
+            value = pick(row, *aliases)
+            if label == "Late Submissions":
+                prog = str(pick(row, "programme", "program_code") or "").strip().upper()
+                module_code = str(
+                    pick(row, "module_code", "course_shortname") or ""
+                ).strip().upper()
+                value = late_by_module.get(
+                    (prog, module_code), value if value != "" else 0
+                )
+            values.append(format_cell(value))
+        _update_col_widths(widths, values, sample_remaining)
+        append_data_row(ws, values)
+        count += 1
+    finish_sheet(ws, len(headers), count, widths)
 
 
 def write_submission_trends(
@@ -942,19 +1068,49 @@ def write_submission_trends(
         ("Missed Count", ("missed_count",)),
         ("Late Submissions", ("late_count", "late_submissions")),
     ]
-    write_mapped_rows(
-        ws,
-        iter_mart_rows(
-            conn,
-            schema,
-            TABLE_TRENDS,
-            programme_codes,
-            category_name,
-            order_columns=["programme", "module_code", "assessment"],
+    late_by_assessment = count_submitted_late_by_keys(
+        conn,
+        schema,
+        programme_codes,
+        category_name,
+        (
+            ("programme", "course_prefix", "program_code"),
+            ("course_shortname", "module_code"),
+            ("assessment_name", "assessment"),
         ),
-        headers,
-        field_map,
     )
+    write_headers(ws, headers)
+    widths = [max(12, min(len(h) + 2, MAX_COLUMN_WIDTH)) for h in headers]
+    sample_remaining = [COLUMN_WIDTH_SAMPLE_ROWS]
+    count = 0
+    for raw in iter_mart_rows(
+        conn,
+        schema,
+        TABLE_TRENDS,
+        programme_codes,
+        category_name,
+        order_columns=["programme", "module_code", "assessment"],
+    ):
+        row = normalize_row(raw)
+        values: list[Any] = []
+        for label, aliases in field_map:
+            value = pick(row, *aliases)
+            if label == "Late Submissions":
+                prog = str(pick(row, "programme", "program_code") or "").strip().upper()
+                module_code = str(
+                    pick(row, "module_code", "course_shortname") or ""
+                ).strip().upper()
+                assessment = str(
+                    pick(row, "assessment", "assessment_name") or ""
+                ).strip().upper()
+                value = late_by_assessment.get(
+                    (prog, module_code, assessment), value if value != "" else 0
+                )
+            values.append(format_cell(value))
+        _update_col_widths(widths, values, sample_remaining)
+        append_data_row(ws, values)
+        count += 1
+    finish_sheet(ws, len(headers), count, widths)
 
 
 def write_student_assessment_detail(
@@ -976,6 +1132,7 @@ def write_student_assessment_detail(
         "Due Date",
         "Submitted Date",
         "Status",
+        "Mark Status",
         "Mark",
         "Max Grade",
         *[label for label, _ in NOTE_FIELD_MAP],
@@ -995,7 +1152,7 @@ def write_student_assessment_detail(
             "course_prefix",
             "course_shortname",
             "assessment_name",
-            "user_idnumber",
+            "student_no",
         ],
     ):
         row = normalize_row(raw)
@@ -1041,7 +1198,7 @@ def write_student_assessment_detail(
             submitted = ""
         values = [
             format_cell(pick(row, "programme", "course_prefix", "program_code")),
-            format_cell(pick(row, "student_no", "user_idnumber")),
+            format_cell(pick(row, "student_no")),
             format_cell(pick(row, "user_fullname")),
             format_cell(pick(row, "user_email")),
             format_cell(pick(row, "course_shortname")),
@@ -1051,6 +1208,7 @@ def write_student_assessment_detail(
             format_cell(pick(row, "due_at", "effective_deadline_at")),
             format_cell(submitted),
             format_cell(display_status),
+            format_cell(pick(row, "mark_status")),
             format_cell(pick(row, "grade_raw")),
             format_cell(pick(row, "max_grade")),
             *[format_cell(pick(row, *aliases)) for _, aliases in NOTE_FIELD_MAP],
@@ -1081,6 +1239,7 @@ def write_missed_assessments(
         "Effective Deadline",
         "Days Overdue",
         "Status",
+        "Mark Status",
         *[label for label, _ in NOTE_FIELD_MAP],
     ]
     field_map = [
@@ -1096,6 +1255,7 @@ def write_missed_assessments(
         ("Effective Deadline", ("effective_deadline_at", "due_date")),
         ("Days Overdue", ("days_overdue",)),
         ("Status", ("status",)),
+        ("Mark Status", ("mark_status",)),
         *NOTE_FIELD_MAP,
     ]
     write_mapped_rows(

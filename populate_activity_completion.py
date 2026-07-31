@@ -75,6 +75,7 @@ DETAIL_HEADERS: list[str] = [
     "Due Date",
     "Submitted Date",
     "Status",
+    "Mark Status",
     "Mark",
     "Max Grade",
     *[label for label, _ in NOTE_FIELD_MAP],
@@ -811,7 +812,6 @@ def write_submission_details(
             "course_shortname",
             "assessment_name",
             "student_no",
-            "user_idnumber",
         ],
     ):
         submitted = pick(
@@ -828,7 +828,7 @@ def write_submission_details(
         values = [
             format_cell(pick(row, "category_name")),
             format_cell(pick(row, "programme", "course_prefix", "program_code")),
-            format_cell(pick(row, "student_no", "user_idnumber")),
+            format_cell(pick(row, "student_no")),
             format_cell(pick(row, "user_fullname")),
             format_cell(pick(row, "user_email")),
             format_cell(pick(row, "course_shortname", "module_code")),
@@ -838,6 +838,7 @@ def write_submission_details(
             format_cell(pick(row, "due_at", "effective_deadline_at")),
             format_cell(submitted),
             format_cell(status_val),
+            format_cell(pick(row, "mark_status")),
             format_cell(pick(row, "grade_raw")),
             format_cell(pick(row, "max_grade")),
             *[format_cell(pick(row, *aliases)) for _, aliases in NOTE_FIELD_MAP],
