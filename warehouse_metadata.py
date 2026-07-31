@@ -677,7 +677,7 @@ def debug_programme_chain(
     conn: duckdb.DuckDBPyConnection,
     category_name: str,
 ) -> dict[str, Any]:
-    """Row counts at each step — run via warehouse_debug.py for troubleshooting."""
+    """Row counts at each step of the category → programme chain (troubleshooting)."""
     staging = staging_schema()
     dim = dim_schema()
     categories = qualified_relation(staging, "stg_moodle_categories")

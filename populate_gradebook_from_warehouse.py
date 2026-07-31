@@ -999,18 +999,49 @@ def write_student_assessment_detail(
         ],
     ):
         row = normalize_row(raw)
-        submitted = pick(row, "grade_submitted_at", "last_attempt_at")
+        submitted = pick(
+            row,
+            "grade_submitted_at",
+            "last_attempt_at",
+            "submitted_at",
+            "graded_at",
+        )
+        # Mart often keeps status='missed' for manual/offline grades when
+        # is_submitted/has_attempt are false — treat a present grade as graded.
+        raw_status = (
+            str(pick(row, "status") or "")
+            .strip()
+            .lower()
+            .replace(" ", "_")
+            .replace("-", "_")
+        )
+        grade = pick(row, "grade_raw")
+        graded_at = pick(row, "graded_at")
+        has_grade = (grade != "" and grade is not None) or (
+            graded_at != "" and graded_at is not None
+        )
+        if raw_status in {"submitted", "graded", "submitted_late"}:
+            display_status = raw_status
+        elif has_grade:
+            display_status = "graded"
+        else:
+            display_status = pick(row, "status")
         is_submitted = row.get("is_submitted")
-        if is_submitted not in (True, 1) and str(is_submitted).lower() not in {
-            "true",
-            "t",
-            "1",
-            "yes",
-        }:
+        if (
+            not has_grade
+            and is_submitted not in (True, 1)
+            and str(is_submitted).lower()
+            not in {
+                "true",
+                "t",
+                "1",
+                "yes",
+            }
+        ):
             submitted = ""
         values = [
             format_cell(pick(row, "programme", "course_prefix", "program_code")),
-            format_cell(pick(row, "user_idnumber")),
+            format_cell(pick(row, "student_no", "user_idnumber")),
             format_cell(pick(row, "user_fullname")),
             format_cell(pick(row, "user_email")),
             format_cell(pick(row, "course_shortname")),
@@ -1019,7 +1050,7 @@ def write_student_assessment_detail(
             format_cell(pick(row, "assessment_type")),
             format_cell(pick(row, "due_at", "effective_deadline_at")),
             format_cell(submitted),
-            format_cell(pick(row, "status")),
+            format_cell(display_status),
             format_cell(pick(row, "grade_raw")),
             format_cell(pick(row, "max_grade")),
             *[format_cell(pick(row, *aliases)) for _, aliases in NOTE_FIELD_MAP],

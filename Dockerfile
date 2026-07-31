@@ -32,6 +32,10 @@ COPY motherduck_client.py \
   warehouse_metadata.py \
   warehouse_export_fallback.py \
   populate_gradebook_from_warehouse.py \
+  populate_activity_completion.py \
+  populate_missed_submissions.py \
+  populate_late_submissions.py \
+  populate_inactivity_report.py \
   ./
 COPY frontend/ ./frontend/
 

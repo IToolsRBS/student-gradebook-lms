@@ -21,14 +21,7 @@ __pycache__
 *.xlsx
 exports
 
-# Legacy / not needed at runtime
-backend
-dbt
-scripts
-main_programme_loader_optimized.py
-warehouse_debug.py
-schema.sql
-openapi.main_programme_loader.yaml
+# Docs not needed at runtime
 LOCAL_RUN_SETUP.md
 
 # Build artifacts

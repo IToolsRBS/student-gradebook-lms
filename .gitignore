@@ -15,15 +15,10 @@ venv/
 .env
 .env.txt
 .env.local
-dbt/profiles.yml
-dbt/target/
-dbt/logs/
-dbt/.user.yml
 
 # Excel / exports
 *.xlsx
-!Gradebook template.xlsx
 
 # IDE
 .vscode/
-.idea/l 
+.idea/
