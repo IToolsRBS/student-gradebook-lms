@@ -36,6 +36,7 @@ COPY motherduck_client.py \
   populate_missed_submissions.py \
   populate_late_submissions.py \
   populate_inactivity_report.py \
+  populate_intake_summary.py \
   ./
 COPY frontend/ ./frontend/
 
