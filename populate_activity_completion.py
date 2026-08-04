@@ -3,7 +3,10 @@ Build Activity Completion export workbook from warehouse gradebook marts.
 
 Filters (CLI; empty / omitted = select all for that dimension):
   category, programme, module, assessment type, assessment,
-  completion status (restricted to submitted / graded / submitted_late).
+  mark status (graded / not_graded).
+
+Always restricted to submitted assessments (status submitted or submitted_late).
+Mark-status filters apply only within those submitted rows — missed is excluded.
 
 Sheets:
   1. Activity Completion Summary — one row per assessment
@@ -49,6 +52,8 @@ from populate_gradebook_from_warehouse import (
 )
 
 ALLOWED_STATUSES: tuple[str, ...] = ("submitted", "graded", "submitted_late")
+# Activity completion always includes only these submission statuses (never missed).
+SUBMISSION_STATUSES: tuple[str, ...] = ("submitted", "submitted_late")
 MARK_STATUSES: tuple[str, ...] = ("graded", "not_graded")
 
 SUMMARY_HEADERS: list[str] = [
@@ -178,46 +183,28 @@ def _truthy_sql(column_name: str) -> str:
     )
 
 
-def _effective_status_sql(mart_cols: dict[str, str]) -> str | None:
-    """
-    Derive completion status for filtering/display.
-
-    Warehouse rows for manual/offline grades often keep status='missed' with
-    is_submitted=false even when grade_raw / graded_at are populated. Treat a
-    present grade as 'graded', and attempt/submit flags as submitted(_late).
-    """
-    status_col = _pick_first_mart_column(mart_cols, ("status",))
-    if not status_col:
-        return None
-
-    raw_status = (
-        "LOWER(REPLACE(REPLACE(TRIM(CAST("
-        f'"{status_col}" AS VARCHAR)), \' \', \'_\'), \'-\', \'_\'))'
-    )
-    grade_col = _pick_first_mart_column(
-        mart_cols, ("grade_raw", "final_grade", "grade")
-    )
-    graded_at_col = _pick_first_mart_column(mart_cols, ("graded_at",))
-    is_submitted_col = _pick_first_mart_column(mart_cols, ("is_submitted",))
-    has_attempt_col = _pick_first_mart_column(mart_cols, ("has_attempt",))
-    attempt_count_col = _pick_first_mart_column(mart_cols, ("attempt_count",))
+def _submitted_branch_sql(mart_cols: dict[str, str]) -> str:
+    """Return SQL expr that yields 'submitted' or 'submitted_late' from due/attempt times."""
     due_col = _pick_first_mart_column(
         mart_cols, ("due_at", "effective_deadline_at", "due_date")
     )
     attempt_at_col = _pick_first_mart_column(
         mart_cols, ("last_attempt_at", "grade_submitted_at", "submitted_at", "graded_at")
     )
-
-    has_grade_parts: list[str] = []
-    if grade_col:
-        has_grade_parts.append(
-            f'("{grade_col}" IS NOT NULL AND '
-            f"TRIM(CAST(\"{grade_col}\" AS VARCHAR)) NOT IN ('', 'nan', 'none', 'null'))"
+    if due_col and attempt_at_col:
+        late_pred = (
+            f'("{due_col}" IS NOT NULL AND "{attempt_at_col}" IS NOT NULL '
+            f'AND CAST("{attempt_at_col}" AS TIMESTAMP) > CAST("{due_col}" AS TIMESTAMP))'
         )
-    if graded_at_col:
-        has_grade_parts.append(f'"{graded_at_col}" IS NOT NULL')
-    has_grade = " OR ".join(has_grade_parts) if has_grade_parts else "false"
+        return f"CASE WHEN {late_pred} THEN 'submitted_late' ELSE 'submitted' END"
+    return "'submitted'"
 
+
+def _was_submitted_sql(mart_cols: dict[str, str]) -> str:
+    """SQL predicate: row has submit/attempt evidence."""
+    is_submitted_col = _pick_first_mart_column(mart_cols, ("is_submitted",))
+    has_attempt_col = _pick_first_mart_column(mart_cols, ("has_attempt",))
+    attempt_count_col = _pick_first_mart_column(mart_cols, ("attempt_count",))
     submitted_parts: list[str] = []
     if is_submitted_col:
         submitted_parts.append(_truthy_sql(is_submitted_col))
@@ -228,30 +215,62 @@ def _effective_status_sql(mart_cols: dict[str, str]) -> str | None:
             f'(TRY_CAST("{attempt_count_col}" AS BIGINT) IS NOT NULL '
             f'AND TRY_CAST("{attempt_count_col}" AS BIGINT) > 0)'
         )
-    was_submitted = " OR ".join(submitted_parts) if submitted_parts else "false"
+    return " OR ".join(submitted_parts) if submitted_parts else "false"
 
-    if due_col and attempt_at_col:
-        late_pred = (
-            f'("{due_col}" IS NOT NULL AND "{attempt_at_col}" IS NOT NULL '
-            f'AND CAST("{attempt_at_col}" AS TIMESTAMP) > CAST("{due_col}" AS TIMESTAMP))'
-        )
-        submitted_branch = (
-            f"CASE WHEN {late_pred} THEN 'submitted_late' ELSE 'submitted' END"
-        )
-    else:
-        submitted_branch = "'submitted'"
+
+def _effective_status_sql(mart_cols: dict[str, str]) -> str | None:
+    """
+    Derive submission status for filtering/display: submitted or submitted_late.
+
+    Warehouse may store status='graded' for a submitted+graded row — map that to
+    submitted(_late). Do not treat missed-with-a-grade as submitted; missed stays
+    missed and is excluded from activity completion.
+    """
+    status_col = _pick_first_mart_column(mart_cols, ("status",))
+    if not status_col:
+        return None
+
+    raw_status = (
+        "LOWER(REPLACE(REPLACE(TRIM(CAST("
+        f'"{status_col}" AS VARCHAR)), \' \', \'_\'), \'-\', \'_\'))'
+    )
+    was_submitted = _was_submitted_sql(mart_cols)
+    submitted_branch = _submitted_branch_sql(mart_cols)
 
     return f"""
         CASE
-            WHEN {raw_status} IN ('submitted', 'graded', 'submitted_late')
+            WHEN {raw_status} IN ('submitted', 'submitted_late')
                 THEN {raw_status}
-            WHEN ({has_grade})
-                THEN 'graded'
-            WHEN ({was_submitted})
+            WHEN {raw_status} = 'graded' OR ({was_submitted})
                 THEN {submitted_branch}
             ELSE {raw_status}
         END
     """.strip()
+
+
+def _submission_lateness(row: dict[str, Any]) -> str:
+    """Return 'submitted_late' or 'submitted' from due/attempt timestamps."""
+    due = pick(row, "due_at", "effective_deadline_at", "due_date")
+    attempt_at = pick(
+        row, "last_attempt_at", "grade_submitted_at", "submitted_at", "graded_at"
+    )
+    if due and attempt_at:
+        try:
+            due_dt = due if isinstance(due, datetime) else datetime.fromisoformat(str(due))
+            att_dt = (
+                attempt_at
+                if isinstance(attempt_at, datetime)
+                else datetime.fromisoformat(str(attempt_at))
+            )
+            if getattr(due_dt, "tzinfo", None):
+                due_dt = due_dt.replace(tzinfo=None)
+            if getattr(att_dt, "tzinfo", None):
+                att_dt = att_dt.replace(tzinfo=None)
+            if att_dt > due_dt:
+                return "submitted_late"
+        except (TypeError, ValueError, OSError):
+            pass
+    return "submitted"
 
 
 def effective_completion_status(row: dict[str, Any]) -> str:
@@ -263,16 +282,8 @@ def effective_completion_status(row: dict[str, Any]) -> str:
         .replace(" ", "_")
         .replace("-", "_")
     )
-    if raw in ALLOWED_STATUSES:
+    if raw in SUBMISSION_STATUSES:
         return raw
-
-    grade = pick(row, "grade_raw", "final_grade", "grade")
-    graded_at = pick(row, "graded_at")
-    has_grade = (grade != "" and grade is not None) or (
-        graded_at != "" and graded_at is not None
-    )
-    if has_grade:
-        return "graded"
 
     def _flag(value: Any) -> bool:
         if value in (True, 1):
@@ -280,7 +291,8 @@ def effective_completion_status(row: dict[str, Any]) -> str:
         return str(value).strip().lower() in {"true", "t", "1", "yes", "y"}
 
     was_submitted = (
-        _flag(row.get("is_submitted"))
+        raw == "graded"
+        or _flag(row.get("is_submitted"))
         or _flag(row.get("has_attempt"))
         or (
             str(pick(row, "attempt_count") or "").strip().isdigit()
@@ -288,27 +300,7 @@ def effective_completion_status(row: dict[str, Any]) -> str:
         )
     )
     if was_submitted:
-        due = pick(row, "due_at", "effective_deadline_at", "due_date")
-        attempt_at = pick(
-            row, "last_attempt_at", "grade_submitted_at", "submitted_at", "graded_at"
-        )
-        if due and attempt_at:
-            try:
-                due_dt = due if isinstance(due, datetime) else datetime.fromisoformat(str(due))
-                att_dt = (
-                    attempt_at
-                    if isinstance(attempt_at, datetime)
-                    else datetime.fromisoformat(str(attempt_at))
-                )
-                if getattr(due_dt, "tzinfo", None):
-                    due_dt = due_dt.replace(tzinfo=None)
-                if getattr(att_dt, "tzinfo", None):
-                    att_dt = att_dt.replace(tzinfo=None)
-                if att_dt > due_dt:
-                    return "submitted_late"
-            except (TypeError, ValueError, OSError):
-                pass
-        return "submitted"
+        return _submission_lateness(row)
     return raw
 
 
@@ -390,13 +382,22 @@ def _build_activity_filter_sql(
     assessment_types: Sequence[str],
     assessments: Sequence[str],
     statuses: Sequence[str],
+    mark_statuses: Sequence[str] | None = None,
     due_from: str | None = None,
     due_to: str | None = None,
     order_columns: Sequence[str] | None = None,
     select_sql: str = "*",
     group_by_sql: str | None = None,
 ) -> tuple[str, list[Any]] | None:
-    """Build filtered SELECT against gradebook_student_assessment_detail."""
+    """Build filtered SELECT against gradebook_student_assessment_detail.
+
+    When ``mark_statuses`` is provided (activity completion), rows are always
+    restricted to submitted / submitted_late, and ``mark_statuses`` further
+    filters mark_status. ``statuses`` is ignored in that mode.
+
+    When ``mark_statuses`` is None (late submissions), ``statuses`` filters
+    effective completion status as before.
+    """
     relation = qualified_relation(schema, TABLE_ASSESSMENT)
     try:
         mart_cols = _mart_columns(conn, schema, TABLE_ASSESSMENT)
@@ -428,35 +429,48 @@ def _build_activity_filter_sql(
 
     base_where = " AND ".join(dim_where) if dim_where else "1=1"
 
-    mark_status_values = [
-        s.strip().lower().replace(" ", "_").replace("-", "_") for s in statuses
-    ]
-    use_mark_status = bool(mark_status_values) and all(
-        s in MARK_STATUSES for s in mark_status_values
-    )
+    effective_sql = _effective_status_sql(mart_cols)
 
-    if use_mark_status:
-        mark_col = _pick_first_mart_column(mart_cols, ("mark_status",))
-        if not mark_col:
-            return None
-        mark_params: list[Any] = []
-        mark_clause = _in_clause(
-            f'LOWER(REPLACE(REPLACE(TRIM(CAST("{mark_col}" AS VARCHAR)), '
-            f"' ', '_'), '-', '_'))",
-            mark_status_values,
-            mark_params,
-        )
-        query = f"SELECT {select_sql} FROM {relation} WHERE {base_where} AND {mark_clause}"
-        params = list(params) + mark_params
-    elif statuses:
-        effective_sql = _effective_status_sql(mart_cols)
+    if mark_statuses is not None:
+        # Activity completion: always submitted / submitted_late only.
         if not effective_sql:
             return None
-        # Derive effective status first (handles missed-but-graded mart rows), then filter.
+        mark_status_values = [
+            s.strip().lower().replace(" ", "_").replace("-", "_")
+            for s in mark_statuses
+            if str(s).strip()
+        ]
+        filter_params: list[Any] = []
+        submission_clause = _in_clause(
+            "effective_status",
+            list(SUBMISSION_STATUSES),
+            filter_params,
+        )
+        where_extra = submission_clause
+        if mark_status_values:
+            mark_col = _pick_first_mart_column(mart_cols, ("mark_status",))
+            if not mark_col:
+                return None
+            mark_clause = _in_clause(
+                f'LOWER(REPLACE(REPLACE(TRIM(CAST("{mark_col}" AS VARCHAR)), '
+                f"' ', '_'), '-', '_'))",
+                mark_status_values,
+                filter_params,
+            )
+            where_extra = f"{submission_clause} AND {mark_clause}"
+        inner = (
+            f'SELECT *, ({effective_sql}) AS effective_status '
+            f"FROM {relation} WHERE {base_where}"
+        )
+        query = f"SELECT {select_sql} FROM ({inner}) AS _activity WHERE {where_extra}"
+        params = list(params) + filter_params
+    elif statuses:
+        if not effective_sql:
+            return None
         status_params: list[Any] = []
         status_clause = _in_clause(
             "effective_status",
-            [s.lower() for s in statuses],
+            [str(s).strip().lower().replace(" ", "_").replace("-", "_") for s in statuses],
             status_params,
         )
         inner = (
@@ -492,6 +506,7 @@ def iter_filtered_assessment_rows(
     assessment_types: Sequence[str],
     assessments: Sequence[str],
     statuses: Sequence[str],
+    mark_statuses: Sequence[str] | None = None,
     due_from: str | None = None,
     due_to: str | None = None,
     order_columns: Sequence[str] | None = None,
@@ -506,6 +521,7 @@ def iter_filtered_assessment_rows(
         assessment_types=assessment_types,
         assessments=assessments,
         statuses=statuses,
+        mark_statuses=mark_statuses,
         due_from=due_from,
         due_to=due_to,
         order_columns=order_columns,
@@ -790,7 +806,8 @@ def write_activity_completion_summary(
         modules=modules,
         assessment_types=assessment_types,
         assessments=assessments,
-        statuses=statuses,
+        statuses=(),
+        mark_statuses=statuses,
         select_sql=", ".join(select_parts),
         group_by_sql=", ".join(group_parts),
         order_columns=["programme", "course_shortname", "assessment_name"],
@@ -877,7 +894,8 @@ def write_submission_details(
         modules=modules,
         assessment_types=assessment_types,
         assessments=assessments,
-        statuses=statuses,
+        statuses=(),
+        mark_statuses=statuses,
         order_columns=[
             "category_name",
             "programme",
@@ -895,7 +913,7 @@ def write_submission_details(
             "graded_at",
         )
         status_val = effective_completion_status(row)
-        if not submitted and status_val not in ALLOWED_STATUSES:
+        if not submitted and status_val not in SUBMISSION_STATUSES:
             submitted = ""
 
         values = [
