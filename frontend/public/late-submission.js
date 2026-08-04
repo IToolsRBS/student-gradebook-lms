@@ -16,10 +16,6 @@ const STAGE_PROGRESS = {
 };
 
 const ASSESSMENT_TYPE_OPTIONS = [
-  {
-    value: "",
-    label: "All Assessment Types (Quiz, Assignment, Exam)"
-  },
   { value: "QUIZ", label: "Quiz" },
   { value: "ASSIGNMENT", label: "Assignment" },
   { value: "EXAM", label: "Exam" }
@@ -160,7 +156,16 @@ function initCustomDropdown(dropdownEl, placeholder, { keepEmptyOption = true } 
   };
 }
 
-function initMultiSelectDropdown(dropdownEl, placeholder) {
+function deriveEntityLabel(placeholder) {
+  const match = String(placeholder || "").match(/select\s+(\w+)/i);
+  return match ? match[1].toLowerCase() : "item";
+}
+
+function pluralEntityLabel(entityLabel) {
+  return entityLabel.endsWith("s") ? entityLabel : `${entityLabel}s`;
+}
+
+function initMultiSelectDropdown(dropdownEl, placeholder, config = {}) {
   const trigger = dropdownEl.querySelector(".dropdown-trigger");
   const valueEl = dropdownEl.querySelector(".dropdown-value");
   const menu = dropdownEl.querySelector(".dropdown-menu");
@@ -171,6 +176,8 @@ function initMultiSelectDropdown(dropdownEl, placeholder) {
   let onSelect = null;
   let loading = false;
   let disabled = false;
+  let entityLabel = config.entityLabel || deriveEntityLabel(placeholder);
+  const pluralLabel = () => pluralEntityLabel(entityLabel);
 
   function selectableOptions() {
     return options.filter((option) => option.value);
@@ -188,7 +195,12 @@ function initMultiSelectDropdown(dropdownEl, placeholder) {
       valueEl.textContent = selected[0].label;
       return;
     }
-    valueEl.textContent = `${selected.length} selected`;
+    const plural = pluralLabel();
+    if (selected.length === selectableOptions().length) {
+      valueEl.textContent = `All ${plural} (${selected.length})`;
+      return;
+    }
+    valueEl.textContent = `${selected.length} ${plural} selected`;
   }
 
   function notifyChange() {
@@ -370,6 +382,9 @@ function initMultiSelectDropdown(dropdownEl, placeholder) {
       filteredOptions = options;
       selectedValues = new Set();
       placeholder = nextPlaceholder;
+      if (!config.entityLabel) {
+        entityLabel = deriveEntityLabel(placeholder);
+      }
       valueEl.textContent = placeholder;
       loading = false;
       renderOptions();
@@ -518,10 +533,79 @@ async function loadModules(moduleDropdown, categoryName, programmeCodes) {
   }
 }
 
+async function loadAssessments(
+  assessmentDropdown,
+  { categoryName, programmeCodes, moduleCodes, assessmentTypes }
+) {
+  const params = new URLSearchParams({
+    categoryName,
+    programmeCodes: programmeCodes.join(",")
+  });
+  if (moduleCodes.length) {
+    params.set("moduleCodes", moduleCodes.join(","));
+  }
+  if (assessmentTypes.length) {
+    params.set("assessmentTypes", assessmentTypes.join(","));
+  }
+  const assessments = await fetchJson(`/api/assessments?${params}`);
+  assessmentDropdown.setOptions(
+    assessments.map((item) => {
+      const name = item.assessment || item.name;
+      return { value: name, label: name };
+    }),
+    "Select assessment(s)"
+  );
+}
+
+function resetProgrammes(programmeDropdown) {
+  programmeDropdown.setDisabled(true);
+  programmeDropdown.setOptions([], "Select programme(s)");
+}
+
 function resetModules(moduleDropdown, hintEl) {
   moduleDropdown.setDisabled(true);
   moduleDropdown.setOptions([], "Select module(s)");
   if (hintEl) hintEl.hidden = false;
+}
+
+function resetAssessmentTypes(assessmentTypeDropdown) {
+  assessmentTypeDropdown.setDisabled(true);
+  assessmentTypeDropdown.setOptions([], "Select assessment type(s)");
+}
+
+function resetAssessments(assessmentDropdown) {
+  assessmentDropdown.setDisabled(true);
+  assessmentDropdown.setOptions([], "Select assessment(s)");
+}
+
+async function refreshAssessments(
+  assessmentDropdown,
+  categoryDropdown,
+  programmeDropdown,
+  moduleDropdown,
+  assessmentTypeDropdown
+) {
+  const categoryName = categoryDropdown.getValue();
+  const programmeCodes = programmeDropdown.getValues();
+  if (!categoryName || !programmeCodes.length) {
+    resetAssessments(assessmentDropdown);
+    return;
+  }
+  assessmentDropdown.setDisabled(false);
+  assessmentDropdown.setLoading(true);
+  try {
+    await loadAssessments(assessmentDropdown, {
+      categoryName,
+      programmeCodes,
+      moduleCodes: moduleDropdown.getValues(),
+      assessmentTypes: assessmentTypeDropdown.getValues()
+    });
+  } catch (error) {
+    resetAssessments(assessmentDropdown);
+    console.error(error);
+  } finally {
+    assessmentDropdown.setLoading(false);
+  }
 }
 
 startClock();
@@ -533,35 +617,37 @@ const categoryDropdown = initCustomDropdown(
 );
 const programmeDropdown = initMultiSelectDropdown(
   document.querySelector('[data-dropdown="programme"]'),
-  "Select programme(s)"
+  "Select programme(s)",
+  { entityLabel: "programme" }
 );
 const moduleDropdown = initMultiSelectDropdown(
   document.querySelector('[data-dropdown="module"]'),
-  "Select module(s)"
+  "Select module(s)",
+  { entityLabel: "module" }
 );
-const assessmentTypeDropdown = initCustomDropdown(
+const assessmentTypeDropdown = initMultiSelectDropdown(
   document.querySelector('[data-dropdown="assessmentType"]'),
-  "All Assessment Types (Quiz, Assignment, Exam)",
-  { keepEmptyOption: false }
+  "Select assessment type(s)",
+  { entityLabel: "assessment type" }
 );
-const assessmentDropdown = initCustomDropdown(
+const assessmentDropdown = initMultiSelectDropdown(
   document.querySelector('[data-dropdown="assessment"]'),
-  "Select assessment"
+  "Select assessment(s)",
+  { entityLabel: "assessment" }
 );
 const moduleHintEl = document.getElementById("moduleHint");
 
 programmeDropdown.setDisabled(true);
 moduleDropdown.setDisabled(true);
-assessmentTypeDropdown.setOptions(ASSESSMENT_TYPE_OPTIONS);
-assessmentDropdown.setOptions([], "Select assessment");
+assessmentTypeDropdown.setDisabled(true);
+assessmentDropdown.setDisabled(true);
 
 categoryDropdown.onChange(async (option) => {
+  resetProgrammes(programmeDropdown);
   resetModules(moduleDropdown, moduleHintEl);
-  if (!option.value) {
-    programmeDropdown.setDisabled(true);
-    programmeDropdown.setOptions([], "Select programme(s)");
-    return;
-  }
+  resetAssessmentTypes(assessmentTypeDropdown);
+  resetAssessments(assessmentDropdown);
+  if (!option.value) return;
   programmeDropdown.setDisabled(false);
   await loadProgrammes(programmeDropdown, option.value);
 });
@@ -571,18 +657,53 @@ programmeDropdown.onChange(async (programmeCodes) => {
   const codes = Array.isArray(programmeCodes)
     ? programmeCodes
     : programmeDropdown.getValues();
+  resetModules(moduleDropdown, moduleHintEl);
+  resetAssessments(assessmentDropdown);
   if (!categoryName || !codes.length) {
-    resetModules(moduleDropdown, moduleHintEl);
+    resetAssessmentTypes(assessmentTypeDropdown);
     return;
   }
   moduleDropdown.setDisabled(false);
   if (moduleHintEl) moduleHintEl.hidden = true;
+  assessmentTypeDropdown.setDisabled(false);
+  assessmentTypeDropdown.setOptions(
+    ASSESSMENT_TYPE_OPTIONS,
+    "Select assessment type(s)"
+  );
+  assessmentDropdown.setDisabled(false);
   try {
     await loadModules(moduleDropdown, categoryName, codes);
   } catch (error) {
     resetModules(moduleDropdown, moduleHintEl);
     window.alert(`Could not load modules: ${error.message}`);
   }
+  await refreshAssessments(
+    assessmentDropdown,
+    categoryDropdown,
+    programmeDropdown,
+    moduleDropdown,
+    assessmentTypeDropdown
+  );
+});
+
+moduleDropdown.onChange(async () => {
+  await refreshAssessments(
+    assessmentDropdown,
+    categoryDropdown,
+    programmeDropdown,
+    moduleDropdown,
+    assessmentTypeDropdown
+  );
+});
+
+assessmentTypeDropdown.onChange(async () => {
+  await refreshAssessments(
+    assessmentDropdown,
+    categoryDropdown,
+    programmeDropdown,
+    moduleDropdown,
+    assessmentTypeDropdown
+  );
 });
 
 loadCategories(categoryDropdown).catch((error) => {
@@ -593,13 +714,17 @@ exportBtn?.addEventListener("click", async () => {
   const categoryName = categoryDropdown.getValue();
   const programmeCodes = programmeDropdown.getValues();
   const moduleCodes = moduleDropdown.getValues();
-  const assessmentType = assessmentTypeDropdown.getValue();
-  const assessment = assessmentDropdown.getValue();
+  const assessmentTypes = assessmentTypeDropdown.getValues();
+  const assessments = assessmentDropdown.getValues();
   const dueFrom = String(dateFromEl?.value || "").trim();
   const dueTo = String(dateToEl?.value || "").trim();
 
   if (!categoryName) {
     window.alert("Select a category (intake) first.");
+    return;
+  }
+  if (!programmeCodes.length) {
+    window.alert("Select at least one programme.");
     return;
   }
   if (dueFrom && dueTo && dueFrom > dueTo) {
@@ -634,8 +759,8 @@ exportBtn?.addEventListener("click", async () => {
         categoryName,
         programmeCodes,
         moduleCodes,
-        assessmentTypes: assessmentType ? [assessmentType] : [],
-        assessments: assessment ? [assessment] : [],
+        assessmentTypes,
+        assessments,
         dueFrom: dueFrom || null,
         dueTo: dueTo || null
       })

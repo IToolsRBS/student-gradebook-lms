@@ -169,17 +169,19 @@
 
             <div class="filter-field filter-field-full">
               <label for="assessmentTypeDropdownBtn">Assessment Type</label>
-              <div class="custom-dropdown" data-dropdown="assessmentType">
+              <div
+                class="custom-dropdown multi-select"
+                data-dropdown="assessmentType"
+              >
                 <button
                   id="assessmentTypeDropdownBtn"
                   class="dropdown-trigger"
                   type="button"
                   aria-haspopup="listbox"
                   aria-expanded="false"
+                  aria-multiselectable="true"
                 >
-                  <span class="dropdown-value"
-                    >All Assessment Types (Quiz, Assignment, Exam)</span
-                  >
+                  <span class="dropdown-value">Select assessment type(s)</span>
                   <span class="dropdown-arrow" aria-hidden="true"></span>
                 </button>
                 <input
@@ -192,12 +194,45 @@
                   class="dropdown-menu"
                   role="listbox"
                   aria-label="Assessment type options"
+                  aria-multiselectable="true"
                 ></ul>
               </div>
             </div>
 
             <div class="filter-field filter-field-full">
-              <label for="statusDropdownBtn">Completion Status</label>
+              <label for="assessmentDropdownBtn">Assessment (Optional)</label>
+              <div
+                class="custom-dropdown multi-select"
+                data-dropdown="assessment"
+              >
+                <button
+                  id="assessmentDropdownBtn"
+                  class="dropdown-trigger"
+                  type="button"
+                  aria-haspopup="listbox"
+                  aria-expanded="false"
+                  aria-multiselectable="true"
+                >
+                  <span class="dropdown-value">Select assessment(s)</span>
+                  <span class="dropdown-arrow" aria-hidden="true"></span>
+                </button>
+                <input
+                  class="dropdown-search"
+                  type="text"
+                  placeholder="Search assessment..."
+                  aria-label="Search assessment"
+                />
+                <ul
+                  class="dropdown-menu"
+                  role="listbox"
+                  aria-label="Assessment options"
+                  aria-multiselectable="true"
+                ></ul>
+              </div>
+            </div>
+
+            <div class="filter-field filter-field-full">
+              <label for="statusDropdownBtn">Mark Status</label>
               <div class="custom-dropdown" data-dropdown="status">
                 <button
                   id="statusDropdownBtn"

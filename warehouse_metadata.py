@@ -25,6 +25,8 @@ from motherduck_client import (
 INT_PROGRAM_CODES_TABLE = "int_moodle_program_codes"
 BRIDGE_CATEGORY_PROGRAMMES_TABLE = "bridge_category_programmes"
 MODULE_SUMMARY_TABLE = "gradebook_module_summary"
+ASSESSMENT_DETAIL_TABLE = "gradebook_student_assessment_detail"
+MISSED_ASSESSMENTS_TABLE = "gradebook_missed_assessments"
 
 
 def _table_columns(conn: duckdb.DuckDBPyConnection, qualified: str) -> set[str]:
@@ -825,6 +827,129 @@ def _fetch_modules_from_courses(
         ).fetchdf()
 
     return _rows_to_modules(df)
+
+
+def _assessment_mart_relation(conn: duckdb.DuckDBPyConnection) -> str | None:
+    schema = gradebook_schema()
+    for table in (ASSESSMENT_DETAIL_TABLE, MISSED_ASSESSMENTS_TABLE):
+        qualified = qualified_relation(schema, table)
+        try:
+            conn.execute(f"SELECT 1 FROM {qualified} LIMIT 1")
+            return qualified
+        except duckdb.CatalogException:
+            continue
+    return None
+
+
+def fetch_assessments(
+    conn: duckdb.DuckDBPyConnection,
+    category_name: str,
+    programme_codes: Sequence[str],
+    module_codes: Sequence[str] | None = None,
+    assessment_types: Sequence[str] | None = None,
+) -> list[dict[str, Any]]:
+    """Distinct assessment names for dropdown filters."""
+    category_name = category_name.strip()
+    programmes = [
+        str(code or "").strip().upper()
+        for code in programme_codes
+        if str(code or "").strip()
+    ]
+    programmes = list(dict.fromkeys(programmes))
+    modules = [
+        str(code or "").strip().upper()
+        for code in (module_codes or [])
+        if str(code or "").strip()
+    ]
+    modules = list(dict.fromkeys(modules))
+    types = [
+        str(value or "").strip().upper()
+        for value in (assessment_types or [])
+        if str(value or "").strip()
+    ]
+    types = list(dict.fromkeys(types))
+    if not category_name or not programmes:
+        return []
+
+    relation = _assessment_mart_relation(conn)
+    if not relation:
+        return []
+
+    cols = _table_columns(conn, relation)
+    programme_col = next(
+        (c for c in ("programme", "course_prefix", "program_code") if c in cols),
+        None,
+    )
+    category_col = "category_name" if "category_name" in cols else None
+    module_col = next(
+        (
+            c
+            for c in ("course_shortname", "module_code", "course_code")
+            if c in cols
+        ),
+        None,
+    )
+    assessment_col = next(
+        (c for c in ("assessment", "assessment_name") if c in cols),
+        None,
+    )
+    assessment_type_col = "assessment_type" if "assessment_type" in cols else None
+    if not programme_col or not assessment_col:
+        return []
+
+    where_parts: list[str] = []
+    params: list[Any] = []
+
+    if category_col:
+        where_parts.append(f'TRIM(CAST("{category_col}" AS VARCHAR)) = TRIM(?)')
+        params.append(category_name)
+
+    prog_placeholders = ", ".join(["?"] * len(programmes))
+    where_parts.append(
+        f'UPPER(TRIM(CAST("{programme_col}" AS VARCHAR))) IN ({prog_placeholders})'
+    )
+    params.extend(programmes)
+
+    if modules and module_col:
+        mod_placeholders = ", ".join(["?"] * len(modules))
+        where_parts.append(
+            f'UPPER(TRIM(CAST("{module_col}" AS VARCHAR))) IN ({mod_placeholders})'
+        )
+        params.extend(modules)
+
+    if types and assessment_type_col:
+        type_placeholders = ", ".join(["?"] * len(types))
+        where_parts.append(
+            f'UPPER(TRIM(CAST("{assessment_type_col}" AS VARCHAR))) '
+            f"IN ({type_placeholders})"
+        )
+        params.extend(types)
+
+    where_parts.append(
+        f'"{assessment_col}" IS NOT NULL '
+        f'AND TRIM(CAST("{assessment_col}" AS VARCHAR)) <> \'\''
+    )
+    where_sql = " AND ".join(where_parts)
+
+    df = conn.execute(
+        f"""
+        SELECT DISTINCT TRIM(CAST("{assessment_col}" AS VARCHAR)) AS assessment
+        FROM {relation}
+        WHERE {where_sql}
+        ORDER BY assessment
+        """,
+        params,
+    ).fetchdf()
+
+    rows: list[dict[str, Any]] = []
+    seen: set[str] = set()
+    for row in df.to_dict("records"):
+        name = str(row.get("assessment") or "").strip()
+        if not name or name.lower() == "nan" or name in seen:
+            continue
+        seen.add(name)
+        rows.append({"assessment": name, "name": name})
+    return rows
 
 
 def _rows_to_modules(df: Any) -> list[dict[str, Any]]:

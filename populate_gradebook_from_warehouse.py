@@ -1198,12 +1198,12 @@ def write_student_assessment_detail(
             submitted = ""
         values = [
             format_cell(pick(row, "programme", "course_prefix", "program_code")),
-            format_cell(pick(row, "student_no")),
+            format_cell(pick(row, "student_no", "user_username")),
             format_cell(pick(row, "user_fullname")),
             format_cell(pick(row, "user_email")),
             format_cell(pick(row, "course_shortname")),
             format_cell(pick(row, "course_fullname")),
-            format_cell(pick(row, "assessment_name")),
+            format_cell(pick(row, "assessment", "assessment_name")),
             format_cell(pick(row, "assessment_type")),
             format_cell(pick(row, "due_at", "effective_deadline_at")),
             format_cell(submitted),

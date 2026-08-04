@@ -145,7 +145,16 @@ function initCustomDropdown(dropdownEl, placeholder) {
   };
 }
 
-function initMultiSelectDropdown(dropdownEl, placeholder) {
+function deriveEntityLabel(placeholder) {
+  const match = String(placeholder || "").match(/select\s+(\w+)/i);
+  return match ? match[1].toLowerCase() : "item";
+}
+
+function pluralEntityLabel(entityLabel) {
+  return entityLabel.endsWith("s") ? entityLabel : `${entityLabel}s`;
+}
+
+function initMultiSelectDropdown(dropdownEl, placeholder, config = {}) {
   const trigger = dropdownEl.querySelector(".dropdown-trigger");
   const valueEl = dropdownEl.querySelector(".dropdown-value");
   const menu = dropdownEl.querySelector(".dropdown-menu");
@@ -156,6 +165,8 @@ function initMultiSelectDropdown(dropdownEl, placeholder) {
   let onSelect = null;
   let loading = false;
   let disabled = false;
+  let entityLabel = config.entityLabel || deriveEntityLabel(placeholder);
+  const pluralLabel = () => pluralEntityLabel(entityLabel);
 
   function selectableOptions() {
     return options.filter((option) => option.value);
@@ -167,10 +178,11 @@ function initMultiSelectDropdown(dropdownEl, placeholder) {
     );
     if (!selected.length) return placeholder;
     if (selected.length === 1) return selected[0].label;
+    const plural = pluralLabel();
     if (selected.length === selectableOptions().length) {
-      return `All programmes (${selected.length})`;
+      return `All ${plural} (${selected.length})`;
     }
-    return `${selected.length} programmes selected`;
+    return `${selected.length} ${plural} selected`;
   }
 
   function updateTrigger() {
@@ -217,14 +229,14 @@ function initMultiSelectDropdown(dropdownEl, placeholder) {
     if (loading) {
       const item = document.createElement("li");
       item.className = "dropdown-option loading";
-      item.textContent = "Loading programmes...";
+      item.textContent = `Loading ${pluralLabel()}...`;
       menu.appendChild(item);
       return;
     }
     if (!options.length) {
       const item = document.createElement("li");
       item.className = "dropdown-option empty";
-      item.textContent = "No programmes available";
+      item.textContent = `No ${pluralLabel()} available`;
       menu.appendChild(item);
       return;
     }
@@ -359,6 +371,9 @@ function initMultiSelectDropdown(dropdownEl, placeholder) {
       filteredOptions = options;
       selectedValues = new Set();
       placeholder = nextPlaceholder;
+      if (!config.entityLabel) {
+        entityLabel = deriveEntityLabel(placeholder);
+      }
       valueEl.textContent = placeholder;
       loading = false;
       renderOptions();
@@ -528,9 +543,12 @@ const moduleHintEl = document.getElementById("moduleHint");
 const categoryDropdown = initCustomDropdown(categoryDropdownEl, "Select category");
 const programmeDropdown = initMultiSelectDropdown(
   programmeDropdownEl,
-  "Select programme(s)"
+  "Select programme(s)",
+  { entityLabel: "programme" }
 );
-const moduleDropdown = initMultiSelectDropdown(moduleDropdownEl, "Select module(s)");
+const moduleDropdown = initMultiSelectDropdown(moduleDropdownEl, "Select module(s)", {
+  entityLabel: "module"
+});
 programmeDropdown.setDisabled(true);
 moduleDropdown.setDisabled(true);
 

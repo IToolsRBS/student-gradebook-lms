@@ -449,6 +449,59 @@ app.get("/api/modules", async (req, res) => {
   }
 });
 
+app.get("/api/assessments", async (req, res) => {
+  const categoryName = String(req.query.categoryName || "").trim();
+  const programmeCodes = [
+    ...new Set(
+      String(req.query.programmeCodes || "")
+        .split(",")
+        .map((code) => String(code || "").trim().toUpperCase())
+        .filter(Boolean)
+    )
+  ];
+  const moduleCodes = [
+    ...new Set(
+      String(req.query.moduleCodes || "")
+        .split(",")
+        .map((code) => String(code || "").trim().toUpperCase())
+        .filter(Boolean)
+    )
+  ];
+  const assessmentTypes = [
+    ...new Set(
+      String(req.query.assessmentTypes || "")
+        .split(",")
+        .map((type) => String(type || "").trim().toUpperCase())
+        .filter(Boolean)
+    )
+  ];
+  if (!categoryName) {
+    return res.status(400).json({ error: "categoryName is required" });
+  }
+  if (!programmeCodes.length) {
+    return res.status(400).json({ error: "programmeCodes is required" });
+  }
+  try {
+    requireMotherduck();
+    const extraArgs = [
+      "--category-name",
+      categoryName,
+      "--programme-codes",
+      programmeCodes.join(",")
+    ];
+    if (moduleCodes.length) {
+      extraArgs.push("--module-codes", moduleCodes.join(","));
+    }
+    if (assessmentTypes.length) {
+      extraArgs.push("--assessment-types", assessmentTypes.join(","));
+    }
+    const assessments = await runWarehouseList("assessments", extraArgs);
+    res.json(assessments);
+  } catch (error) {
+    res.status(500).json({ error: String(error?.message || error) });
+  }
+});
+
 app.post("/api/export-excel/start", async (req, res) => {
   const categoryName = String(req.body?.categoryName || "").trim();
   const rawCodes = Array.isArray(req.body?.programmeCodes)
@@ -501,7 +554,7 @@ app.post("/api/export-excel/start", async (req, res) => {
         stage: "excel",
         message:
           programmeCodes.length === 1
-            ? "Building Excel from MotherDuck gradebook marts..."
+            ? "Building Excel..."
             : `Building batch Excel for ${programmeCodes.length} programmes...`
       });
 
@@ -510,7 +563,7 @@ app.post("/api/export-excel/start", async (req, res) => {
         updateJob(jobId, {
           message:
             programmeCodes.length === 1
-              ? `Building Excel from MotherDuck gradebook marts... (${elapsedSec}s)`
+              ? `Building Excel... (${elapsedSec}s)`
               : `Building batch Excel for ${programmeCodes.length} programmes... (${elapsedSec}s)`
         });
       }, 10000);
@@ -635,13 +688,13 @@ app.post("/api/export-intake-summary/start", async (req, res) => {
       updateJob(jobId, {
         status: "running",
         stage: "excel",
-        message: "Building Intake Summary from MotherDuck marts..."
+        message: "Building Intake Summary..."
       });
 
       const heartbeat = setInterval(() => {
         const elapsedSec = Math.round((Date.now() - startedAt) / 1000);
         updateJob(jobId, {
-          message: `Building Intake Summary from MotherDuck marts... (${elapsedSec}s)`
+          message: `Building Intake Summary... (${elapsedSec}s)`
         });
       }, 10000);
 
@@ -750,6 +803,13 @@ app.post("/api/export-activity-completion/start", async (req, res) => {
         .filter(Boolean)
     )
   ];
+  const assessments = [
+    ...new Set(
+      (Array.isArray(req.body?.assessments) ? req.body.assessments : [])
+        .map((name) => String(name || "").trim())
+        .filter(Boolean)
+    )
+  ];
   const statuses = [
     ...new Set(
       (Array.isArray(req.body?.statuses) ? req.body.statuses : [])
@@ -765,6 +825,9 @@ app.post("/api/export-activity-completion/start", async (req, res) => {
 
   if (!categoryName) {
     return res.status(400).json({ error: "categoryName is required" });
+  }
+  if (!programmeCodes.length) {
+    return res.status(400).json({ error: "At least one programme is required" });
   }
   if (!motherduckToken) {
     return res.status(500).json({
@@ -786,6 +849,7 @@ app.post("/api/export-activity-completion/start", async (req, res) => {
     programmeCodes,
     moduleCodes,
     assessmentTypes,
+    assessments,
     statuses,
     reportType: "activity-completion",
     timingsMs: {}
@@ -799,13 +863,13 @@ app.post("/api/export-activity-completion/start", async (req, res) => {
       updateJob(jobId, {
         status: "running",
         stage: "excel",
-        message: "Building Activity Completion report from MotherDuck marts..."
+        message: "Building Activity Completion report..."
       });
 
       const heartbeat = setInterval(() => {
         const elapsedSec = Math.round((Date.now() - startedAt) / 1000);
         updateJob(jobId, {
-          message: `Building Activity Completion report from MotherDuck marts... (${elapsedSec}s)`
+          message: `Building Activity Completion report... (${elapsedSec}s)`
         });
       }, 10000);
 
@@ -826,6 +890,9 @@ app.post("/api/export-activity-completion/start", async (req, res) => {
       }
       for (const assessmentType of assessmentTypes) {
         pythonArgs.push("--assessment-type", assessmentType);
+      }
+      for (const assessment of assessments) {
+        pythonArgs.push("--assessment", assessment);
       }
       for (const status of statuses) {
         pythonArgs.push("--status", status);
@@ -955,13 +1022,13 @@ app.post("/api/export-inactivity-report/start", async (req, res) => {
       updateJob(jobId, {
         status: "running",
         stage: "excel",
-        message: "Building Inactivity Report from MotherDuck marts..."
+        message: "Building Inactivity Report..."
       });
 
       const heartbeat = setInterval(() => {
         const elapsedSec = Math.round((Date.now() - startedAt) / 1000);
         updateJob(jobId, {
-          message: `Building Inactivity Report from MotherDuck marts... (${elapsedSec}s)`
+          message: `Building Inactivity Report... (${elapsedSec}s)`
         });
       }, 10000);
 
@@ -1088,6 +1155,9 @@ app.post("/api/export-missed-submissions/start", async (req, res) => {
   if (!categoryName) {
     return res.status(400).json({ error: "categoryName is required" });
   }
+  if (!programmeCodes.length) {
+    return res.status(400).json({ error: "At least one programme is required" });
+  }
   if (dueFrom && !/^\d{4}-\d{2}-\d{2}$/.test(dueFrom)) {
     return res.status(400).json({ error: "dueFrom must be YYYY-MM-DD" });
   }
@@ -1132,13 +1202,13 @@ app.post("/api/export-missed-submissions/start", async (req, res) => {
       updateJob(jobId, {
         status: "running",
         stage: "excel",
-        message: "Building Missed Submission Report from MotherDuck marts..."
+        message: "Building Missed Submission Report..."
       });
 
       const heartbeat = setInterval(() => {
         const elapsedSec = Math.round((Date.now() - startedAt) / 1000);
         updateJob(jobId, {
-          message: `Building Missed Submission Report from MotherDuck marts... (${elapsedSec}s)`
+          message: `Building Missed Submission Report... (${elapsedSec}s)`
         });
       }, 10000);
 
@@ -1278,6 +1348,9 @@ app.post("/api/export-late-submissions/start", async (req, res) => {
   if (!categoryName) {
     return res.status(400).json({ error: "categoryName is required" });
   }
+  if (!programmeCodes.length) {
+    return res.status(400).json({ error: "At least one programme is required" });
+  }
   if (dueFrom && !/^\d{4}-\d{2}-\d{2}$/.test(dueFrom)) {
     return res.status(400).json({ error: "dueFrom must be YYYY-MM-DD" });
   }
@@ -1322,13 +1395,13 @@ app.post("/api/export-late-submissions/start", async (req, res) => {
       updateJob(jobId, {
         status: "running",
         stage: "excel",
-        message: "Building Late Submission Report from MotherDuck marts..."
+        message: "Building Late Submission Report..."
       });
 
       const heartbeat = setInterval(() => {
         const elapsedSec = Math.round((Date.now() - startedAt) / 1000);
         updateJob(jobId, {
-          message: `Building Late Submission Report from MotherDuck marts... (${elapsedSec}s)`
+          message: `Building Late Submission Report... (${elapsedSec}s)`
         });
       }, 10000);
 

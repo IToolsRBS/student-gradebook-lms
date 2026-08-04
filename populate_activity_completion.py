@@ -49,6 +49,7 @@ from populate_gradebook_from_warehouse import (
 )
 
 ALLOWED_STATUSES: tuple[str, ...] = ("submitted", "graded", "submitted_late")
+MARK_STATUSES: tuple[str, ...] = ("graded", "not_graded")
 
 SUMMARY_HEADERS: list[str] = [
     "Category",
@@ -98,9 +99,41 @@ def _normalize_filter_values(values: Sequence[str] | None) -> list[str]:
     return out
 
 
+def _normalize_mark_statuses(values: Sequence[str] | None) -> list[str]:
+    """
+    Mark-status filter for activity completion (graded / not_graded).
+    Empty / select-all → no mark_status filter (return empty list).
+    """
+    requested = _normalize_filter_values(values)
+    if not requested:
+        return []
+
+    allowed_lookup = {s: s for s in MARK_STATUSES}
+    # Accept "not graded" → not_graded
+    resolved: list[str] = []
+    seen: set[str] = set()
+    invalid: list[str] = []
+    for raw in requested:
+        key = raw.strip().lower().replace(" ", "_").replace("-", "_")
+        canonical = allowed_lookup.get(key)
+        if not canonical:
+            invalid.append(raw)
+            continue
+        if canonical not in seen:
+            seen.add(canonical)
+            resolved.append(canonical)
+    if invalid:
+        raise SystemExit(
+            "Invalid --status value(s): "
+            + ", ".join(invalid)
+            + f". Allowed mark statuses: {', '.join(MARK_STATUSES)}"
+        )
+    return resolved
+
+
 def _normalize_statuses(values: Sequence[str] | None) -> list[str]:
     """
-    Return allowed statuses to include.
+    Return allowed completion statuses to include.
     Empty / select-all → all ALLOWED_STATUSES.
     Unknown values are rejected.
     """
@@ -297,7 +330,7 @@ def _build_dimension_where(
     )
     assessment_type_col = _pick_first_mart_column(mart_cols, ("assessment_type",))
     assessment_col = _pick_first_mart_column(
-        mart_cols, ("assessment_name", "assessment")
+        mart_cols, ("assessment", "assessment_name")
     )
 
     where_parts: list[str] = []
@@ -336,15 +369,12 @@ def _build_dimension_where(
             )
         )
     if assessments and assessment_col:
-        # Allow partial matches so "exam submission" hits "Examination Submission".
-        like_parts: list[str] = []
-        for name in assessments:
-            like_parts.append(
-                f'UPPER(TRIM(CAST("{assessment_col}" AS VARCHAR))) LIKE ?'
-            )
-            params.append(f"%{name.strip().upper()}%")
         where_parts.append(
-            like_parts[0] if len(like_parts) == 1 else "(" + " OR ".join(like_parts) + ")"
+            _in_clause(
+                f'UPPER(TRIM(CAST("{assessment_col}" AS VARCHAR)))',
+                [a.strip().upper() for a in assessments],
+                params,
+            )
         )
 
     return where_parts, params
@@ -373,10 +403,6 @@ def _build_activity_filter_sql(
     except duckdb.CatalogException:
         return None
 
-    effective_sql = _effective_status_sql(mart_cols)
-    if not effective_sql:
-        return None
-
     dim_where, params = _build_dimension_where(
         mart_cols,
         category_names=category_names,
@@ -402,19 +428,45 @@ def _build_activity_filter_sql(
 
     base_where = " AND ".join(dim_where) if dim_where else "1=1"
 
-    # Derive effective status first (handles missed-but-graded mart rows), then filter.
-    status_params: list[Any] = []
-    status_clause = _in_clause(
-        "effective_status",
-        [s.lower() for s in statuses],
-        status_params,
+    mark_status_values = [
+        s.strip().lower().replace(" ", "_").replace("-", "_") for s in statuses
+    ]
+    use_mark_status = bool(mark_status_values) and all(
+        s in MARK_STATUSES for s in mark_status_values
     )
-    inner = (
-        f'SELECT *, ({effective_sql}) AS effective_status '
-        f"FROM {relation} WHERE {base_where}"
-    )
-    query = f"SELECT {select_sql} FROM ({inner}) AS _activity WHERE {status_clause}"
-    params = list(params) + status_params
+
+    if use_mark_status:
+        mark_col = _pick_first_mart_column(mart_cols, ("mark_status",))
+        if not mark_col:
+            return None
+        mark_params: list[Any] = []
+        mark_clause = _in_clause(
+            f'LOWER(REPLACE(REPLACE(TRIM(CAST("{mark_col}" AS VARCHAR)), '
+            f"' ', '_'), '-', '_'))",
+            mark_status_values,
+            mark_params,
+        )
+        query = f"SELECT {select_sql} FROM {relation} WHERE {base_where} AND {mark_clause}"
+        params = list(params) + mark_params
+    elif statuses:
+        effective_sql = _effective_status_sql(mart_cols)
+        if not effective_sql:
+            return None
+        # Derive effective status first (handles missed-but-graded mart rows), then filter.
+        status_params: list[Any] = []
+        status_clause = _in_clause(
+            "effective_status",
+            [s.lower() for s in statuses],
+            status_params,
+        )
+        inner = (
+            f'SELECT *, ({effective_sql}) AS effective_status '
+            f"FROM {relation} WHERE {base_where}"
+        )
+        query = f"SELECT {select_sql} FROM ({inner}) AS _activity WHERE {status_clause}"
+        params = list(params) + status_params
+    else:
+        query = f"SELECT {select_sql} FROM {relation} WHERE {base_where}"
 
     if group_by_sql:
         query += f" GROUP BY {group_by_sql}"
@@ -704,7 +756,7 @@ def write_activity_completion_summary(
     )
     module_name_col = _pick_first_mart_column(mart_cols, ("course_fullname", "module"))
     assessment_col = _pick_first_mart_column(
-        mart_cols, ("assessment_name", "assessment")
+        mart_cols, ("assessment", "assessment_name")
     )
     assessment_type_col = _pick_first_mart_column(mart_cols, ("assessment_type",))
     if not programme_col or not module_code_col or not assessment_col:
@@ -849,12 +901,12 @@ def write_submission_details(
         values = [
             format_cell(pick(row, "category_name")),
             format_cell(pick(row, "programme", "course_prefix", "program_code")),
-            format_cell(pick(row, "student_no")),
+            format_cell(pick(row, "student_no", "user_username")),
             format_cell(pick(row, "user_fullname")),
             format_cell(pick(row, "user_email")),
             format_cell(pick(row, "course_shortname", "module_code")),
             format_cell(pick(row, "course_fullname", "module")),
-            format_cell(pick(row, "assessment_name", "assessment")),
+            format_cell(pick(row, "assessment", "assessment_name")),
             format_cell(pick(row, "assessment_type")),
             format_cell(pick(row, "due_at", "effective_deadline_at")),
             format_cell(submitted),
@@ -976,8 +1028,8 @@ def main() -> None:
         dest="statuses",
         default=None,
         help=(
-            "Completion status filter (repeatable). "
-            f"Allowed: {', '.join(ALLOWED_STATUSES)}. Omit = all allowed."
+            "Mark status filter for activity completion (repeatable): "
+            f"{', '.join(MARK_STATUSES)}. Omit = all."
         ),
     )
     parser.add_argument(
@@ -1004,7 +1056,7 @@ def main() -> None:
     assessments = [
         a.strip().upper() for a in _normalize_filter_values(args.assessments)
     ]
-    statuses = _normalize_statuses(args.statuses)
+    statuses = _normalize_mark_statuses(args.statuses)
 
     schema = args.warehouse_schema or gradebook_schema() or DEFAULT_SCHEMA
     output_dir = Path(args.output_dir)

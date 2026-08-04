@@ -144,7 +144,16 @@ function initCustomDropdown(dropdownEl, placeholder) {
   };
 }
 
-function initMultiSelectDropdown(dropdownEl, placeholder) {
+function deriveEntityLabel(placeholder) {
+  const match = String(placeholder || "").match(/select\s+(\w+)/i);
+  return match ? match[1].toLowerCase() : "item";
+}
+
+function pluralEntityLabel(entityLabel) {
+  return entityLabel.endsWith("s") ? entityLabel : `${entityLabel}s`;
+}
+
+function initMultiSelectDropdown(dropdownEl, placeholder, config = {}) {
   const trigger = dropdownEl.querySelector(".dropdown-trigger");
   const valueEl = dropdownEl.querySelector(".dropdown-value");
   const menu = dropdownEl.querySelector(".dropdown-menu");
@@ -155,6 +164,8 @@ function initMultiSelectDropdown(dropdownEl, placeholder) {
   let onSelect = null;
   let loading = false;
   let disabled = false;
+  let entityLabel = config.entityLabel || deriveEntityLabel(placeholder);
+  const pluralLabel = () => pluralEntityLabel(entityLabel);
 
   function selectableOptions() {
     return options.filter((option) => option.value);
@@ -172,7 +183,12 @@ function initMultiSelectDropdown(dropdownEl, placeholder) {
       valueEl.textContent = selected[0].label;
       return;
     }
-    valueEl.textContent = `${selected.length} selected`;
+    const plural = pluralLabel();
+    if (selected.length === selectableOptions().length) {
+      valueEl.textContent = `All ${plural} (${selected.length})`;
+      return;
+    }
+    valueEl.textContent = `${selected.length} ${plural} selected`;
   }
 
   function notifyChange() {
@@ -341,6 +357,9 @@ function initMultiSelectDropdown(dropdownEl, placeholder) {
       filteredOptions = options;
       selectedValues = new Set();
       placeholder = nextPlaceholder;
+      if (!config.entityLabel) {
+        entityLabel = deriveEntityLabel(placeholder);
+      }
       valueEl.textContent = placeholder;
       loading = false;
       renderOptions();
@@ -560,11 +579,13 @@ const categoryDropdown = initCustomDropdown(
 );
 const programmeDropdown = initMultiSelectDropdown(
   document.querySelector('[data-dropdown="programme"]'),
-  "Select programme(s)"
+  "Select programme(s)",
+  { entityLabel: "programme" }
 );
 const moduleDropdown = initMultiSelectDropdown(
   document.querySelector('[data-dropdown="module"]'),
-  "Select module(s)"
+  "Select module(s)",
+  { entityLabel: "module" }
 );
 const moduleHintEl = document.getElementById("moduleHint");
 

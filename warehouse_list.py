@@ -6,7 +6,7 @@ import argparse
 import json
 
 from motherduck_client import connect_motherduck
-from warehouse_metadata import fetch_categories, fetch_modules, fetch_programmes
+from warehouse_metadata import fetch_assessments, fetch_categories, fetch_modules, fetch_programmes
 
 
 def main() -> None:
@@ -22,6 +22,11 @@ def main() -> None:
         required=True,
         help="Comma-separated programme codes",
     )
+    assessments = sub.add_parser("assessments", help="List assessments for filters")
+    assessments.add_argument("--category-name", required=True)
+    assessments.add_argument("--programme-codes", required=True)
+    assessments.add_argument("--module-codes", default="")
+    assessments.add_argument("--assessment-types", default="")
     args = parser.parse_args()
 
     conn = connect_motherduck()
@@ -30,13 +35,36 @@ def main() -> None:
             payload = fetch_categories(conn)
         elif args.command == "programmes":
             payload = fetch_programmes(conn, args.category_name)
-        else:
+        elif args.command == "modules":
             codes = [
                 part.strip()
                 for part in str(args.programme_codes or "").split(",")
                 if part.strip()
             ]
             payload = fetch_modules(conn, args.category_name, codes)
+        else:
+            programme_codes = [
+                part.strip()
+                for part in str(args.programme_codes or "").split(",")
+                if part.strip()
+            ]
+            module_codes = [
+                part.strip()
+                for part in str(args.module_codes or "").split(",")
+                if part.strip()
+            ]
+            assessment_types = [
+                part.strip()
+                for part in str(args.assessment_types or "").split(",")
+                if part.strip()
+            ]
+            payload = fetch_assessments(
+                conn,
+                args.category_name,
+                programme_codes,
+                module_codes=module_codes or None,
+                assessment_types=assessment_types or None,
+            )
     finally:
         conn.close()
 
