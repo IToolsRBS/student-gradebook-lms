@@ -20,14 +20,15 @@ from openpyxl import Workbook
 from openpyxl.cell import WriteOnlyCell
 from openpyxl.styles import Alignment, Font, PatternFill
 from openpyxl.utils import get_column_letter
+from openpyxl.worksheet.table import Table, TableStyleInfo
 from openpyxl.worksheet.worksheet import Worksheet
 
 # Stream MotherDuck results in chunks to avoid pandas DataFrame spikes.
 FETCH_CHUNK_SIZE = 1000
-# Sample this many data rows when estimating column widths (write-only sheets).
-COLUMN_WIDTH_SAMPLE_ROWS = 50
-DEFAULT_COLUMN_WIDTH = 18
-MAX_COLUMN_WIDTH = 45
+# Autofit uses up to this many data rows when estimating column widths.
+COLUMN_WIDTH_SAMPLE_ROWS = 5000
+DEFAULT_COLUMN_WIDTH = 12
+MAX_COLUMN_WIDTH = 60
 
 from motherduck_client import (
     connect_motherduck,
@@ -326,9 +327,16 @@ def append_data_row(ws: Worksheet, values: Sequence[Any]) -> None:
     ws.append(cells)
 
 
-_HEADER_FILL = PatternFill(fill_type="solid", fgColor="1F4E78")
+_HEADER_FILL = PatternFill(fill_type="solid", fgColor="632523")
 _HEADER_FONT = Font(color="FFFFFF", bold=True)
 _HEADER_ALIGN = Alignment(horizontal="center", vertical="center", wrap_text=True)
+_TABLE_STYLE = TableStyleInfo(
+    name="TableStyleLight1",
+    showFirstColumn=False,
+    showLastColumn=False,
+    showRowStripes=False,
+    showColumnStripes=False,
+)
 
 
 def write_headers(ws: Worksheet, headers: Sequence[str]) -> None:
@@ -343,40 +351,82 @@ def write_headers(ws: Worksheet, headers: Sequence[str]) -> None:
     ws.append(cells)
 
 
+def _unique_table_name(ws: Worksheet) -> str:
+    """Build a workbook-unique Excel table display name from the sheet title."""
+    base = "".join(ch for ch in (ws.title or "Sheet") if ch.isalnum()) or "Sheet"
+    if not base[0].isalpha():
+        base = f"T{base}"
+    base = base[:40]
+    existing: set[str] = set()
+    wb = ws.parent
+    if wb is not None:
+        for sheet in wb.worksheets:
+            tables = getattr(sheet, "tables", None)
+            if tables is None:
+                continue
+            try:
+                existing.update(tables.keys())
+            except Exception:
+                continue
+    if base not in existing:
+        return base
+    idx = 2
+    while f"{base}_{idx}" in existing:
+        idx += 1
+    return f"{base}_{idx}"
+
+
 def finish_sheet(
     ws: Worksheet,
-    column_count: int,
+    headers: Sequence[str],
     data_row_count: int,
     col_widths: Sequence[int] | None = None,
 ) -> None:
-    """Freeze/filter/widths without scanning every cell (huge RAM saver)."""
+    """
+    Freeze header, format as Excel Table (White / Table Style Light 1),
+    and autofit column widths from sampled content.
+    """
+    column_count = len(headers)
     if column_count < 1:
         return
     ws.freeze_panes = "A2"
     last_col = get_column_letter(column_count)
     last_row = max(1, data_row_count + 1)
-    ws.auto_filter.ref = f"A1:{last_col}{last_row}"
+    ref = f"A1:{last_col}{last_row}"
+
+    table = Table(displayName=_unique_table_name(ws), ref=ref)
+    table.tableStyleInfo = _TABLE_STYLE
+    # write-only sheets need explicit table column names matching the header row
+    table._initialise_columns()
+    for column, header in zip(table.tableColumns, headers):
+        column.name = str(header)
+    ws.add_table(table)
+
     widths = list(col_widths) if col_widths else []
     for idx in range(1, column_count + 1):
-        width = (
+        header_width = min(len(str(headers[idx - 1])) + 2, MAX_COLUMN_WIDTH)
+        sampled = (
             widths[idx - 1]
             if idx - 1 < len(widths)
             else DEFAULT_COLUMN_WIDTH
         )
+        width = min(max(header_width, sampled, DEFAULT_COLUMN_WIDTH), MAX_COLUMN_WIDTH)
         ws.column_dimensions[get_column_letter(idx)].width = width
 
 
 def _update_col_widths(
-    widths: list[int], values: Sequence[Any], sample_remaining: list[int]
+    widths: list[int], values: Sequence[Any], sample_remaining: list[int] | None = None
 ) -> None:
-    if sample_remaining[0] <= 0:
-        return
-    sample_remaining[0] -= 1
+    """Track max display width per column for autofit (all rows when sample is None/unused)."""
+    if sample_remaining is not None:
+        if sample_remaining[0] <= 0:
+            return
+        sample_remaining[0] -= 1
     for idx, value in enumerate(values):
         text = _display_width_text(value)
         length = min(len(text) + 2, MAX_COLUMN_WIDTH)
         if idx >= len(widths):
-            widths.append(max(12, length))
+            widths.append(max(DEFAULT_COLUMN_WIDTH, length))
         else:
             widths[idx] = max(widths[idx], length)
 
@@ -385,7 +435,7 @@ def add_header_only_sheet(wb: Workbook, title: str, headers: Sequence[str]) -> N
     """Create a mart sheet with column headers only (no data rows)."""
     ws = wb.create_sheet(title=title[:31])
     write_headers(ws, headers)
-    finish_sheet(ws, len(headers), 0)
+    finish_sheet(ws, headers, 0)
 
 
 def write_mapped_rows(
@@ -395,16 +445,15 @@ def write_mapped_rows(
     field_map: Sequence[tuple[str, tuple[str, ...]]],
 ) -> int:
     write_headers(ws, headers)
-    widths = [max(12, min(len(h) + 2, MAX_COLUMN_WIDTH)) for h in headers]
-    sample_remaining = [COLUMN_WIDTH_SAMPLE_ROWS]
+    widths = [max(DEFAULT_COLUMN_WIDTH, min(len(h) + 2, MAX_COLUMN_WIDTH)) for h in headers]
     count = 0
     for raw in rows:
         row = normalize_row(raw)
         values = [format_cell(pick(row, *aliases)) for _, aliases in field_map]
-        _update_col_widths(widths, values, sample_remaining)
+        _update_col_widths(widths, values)
         append_data_row(ws, values)
         count += 1
-    finish_sheet(ws, len(headers), count, widths)
+    finish_sheet(ws, headers, count, widths)
     return count
 
 
@@ -892,7 +941,7 @@ def write_programme_summary(
         append_data_row(ws, values)
         count = 1
 
-    finish_sheet(ws, len(headers), count, widths)
+    finish_sheet(ws, headers, count, widths)
 
 
 def write_student_summary(
@@ -966,7 +1015,7 @@ def write_student_summary(
         _update_col_widths(widths, values, sample_remaining)
         append_data_row(ws, values)
         count += 1
-    finish_sheet(ws, len(headers), count, widths)
+    finish_sheet(ws, headers, count, widths)
 
 
 def write_module_summary(
@@ -1034,7 +1083,7 @@ def write_module_summary(
         _update_col_widths(widths, values, sample_remaining)
         append_data_row(ws, values)
         count += 1
-    finish_sheet(ws, len(headers), count, widths)
+    finish_sheet(ws, headers, count, widths)
 
 
 def write_submission_trends(
@@ -1110,7 +1159,7 @@ def write_submission_trends(
         _update_col_widths(widths, values, sample_remaining)
         append_data_row(ws, values)
         count += 1
-    finish_sheet(ws, len(headers), count, widths)
+    finish_sheet(ws, headers, count, widths)
 
 
 def write_student_assessment_detail(
@@ -1216,7 +1265,7 @@ def write_student_assessment_detail(
         _update_col_widths(widths, values, sample_remaining)
         append_data_row(ws, values)
         count += 1
-    finish_sheet(ws, len(headers), count, widths)
+    finish_sheet(ws, headers, count, widths)
 
 
 def write_missed_assessments(
@@ -1300,7 +1349,7 @@ def write_gradebook_course_notes(
         _update_col_widths(widths, values, sample_remaining)
         append_data_row(ws, values)
         count += 1
-    finish_sheet(ws, len(headers), count, widths)
+    finish_sheet(ws, headers, count, widths)
 
 
 def write_upcoming_deadlines(

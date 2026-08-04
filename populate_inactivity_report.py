@@ -542,7 +542,7 @@ def _write_inactive_student_rows(
         _update_col_widths(widths, values, sample_remaining)
         append_data_row(ws, values)
         count += 1
-    finish_sheet(ws, len(INACTIVE_STUDENT_HEADERS), count, widths)
+    finish_sheet(ws, INACTIVE_STUDENT_HEADERS, count, widths)
     return count
 
 
@@ -572,7 +572,7 @@ def _write_never_submitted_rows(
         _update_col_widths(widths, values, sample_remaining)
         append_data_row(ws, values)
         count += 1
-    finish_sheet(ws, len(NEVER_SUBMITTED_HEADERS), count, widths)
+    finish_sheet(ws, NEVER_SUBMITTED_HEADERS, count, widths)
     return count
 
 
@@ -600,13 +600,13 @@ def write_inactivity_summary(
     try:
         mart_cols = _mart_columns(conn, schema, TABLE_STUDENT)
     except duckdb.CatalogException:
-        finish_sheet(ws, len(headers), 0, widths)
+        finish_sheet(ws, headers, 0, widths)
         return 0
 
     inactive_pred = _inactivity_predicate_sql(mart_cols, period)
     never_sub = _never_submitted_predicate(conn, schema, mart_cols)
     if not inactive_pred:
-        finish_sheet(ws, len(headers), 0, widths)
+        finish_sheet(ws, headers, 0, widths)
         return 0
 
     programme_col = _pick_first_mart_column(
@@ -614,7 +614,7 @@ def write_inactivity_summary(
     )
     category_col = _pick_first_mart_column(mart_cols, ("category_name",))
     if not programme_col:
-        finish_sheet(ws, len(headers), 0, widths)
+        finish_sheet(ws, headers, 0, widths)
         return 0
 
     where_parts, params = _student_dimension_where(
@@ -688,7 +688,7 @@ def write_inactivity_summary(
             append_data_row(ws, values)
             count += 1
 
-    finish_sheet(ws, len(headers), count, widths)
+    finish_sheet(ws, headers, count, widths)
     return count
 
 
@@ -705,13 +705,13 @@ def write_inactive_students(
         mart_cols = _mart_columns(conn, schema, TABLE_STUDENT)
     except duckdb.CatalogException:
         write_headers(ws, INACTIVE_STUDENT_HEADERS)
-        finish_sheet(ws, len(INACTIVE_STUDENT_HEADERS), 0)
+        finish_sheet(ws, INACTIVE_STUDENT_HEADERS, 0)
         return 0
 
     inactive_pred = _inactivity_predicate_sql(mart_cols, period)
     if not inactive_pred:
         write_headers(ws, INACTIVE_STUDENT_HEADERS)
-        finish_sheet(ws, len(INACTIVE_STUDENT_HEADERS), 0)
+        finish_sheet(ws, INACTIVE_STUDENT_HEADERS, 0)
         return 0
 
     return _write_inactive_student_rows(
@@ -739,13 +739,13 @@ def write_never_submitted_students(
         mart_cols = _mart_columns(conn, schema, TABLE_STUDENT)
     except duckdb.CatalogException:
         write_headers(ws, NEVER_SUBMITTED_HEADERS)
-        finish_sheet(ws, len(NEVER_SUBMITTED_HEADERS), 0)
+        finish_sheet(ws, NEVER_SUBMITTED_HEADERS, 0)
         return 0
 
     never_sub = _never_submitted_predicate(conn, schema, mart_cols)
     if not never_sub:
         write_headers(ws, NEVER_SUBMITTED_HEADERS)
-        finish_sheet(ws, len(NEVER_SUBMITTED_HEADERS), 0)
+        finish_sheet(ws, NEVER_SUBMITTED_HEADERS, 0)
         return 0
 
     never_sql, never_params = never_sub

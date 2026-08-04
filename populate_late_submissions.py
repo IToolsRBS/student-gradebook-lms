@@ -92,7 +92,7 @@ def write_late_submissions_summary(
     try:
         mart_cols = _mart_columns(conn, schema, TABLE_ASSESSMENT)
     except duckdb.CatalogException:
-        finish_sheet(ws, len(SUMMARY_HEADERS), 0, widths)
+        finish_sheet(ws, SUMMARY_HEADERS, 0, widths)
         return 0
 
     category_col = _pick_first_mart_column(mart_cols, ("category_name",))
@@ -108,7 +108,7 @@ def write_late_submissions_summary(
     )
     assessment_type_col = _pick_first_mart_column(mart_cols, ("assessment_type",))
     if not programme_col or not module_code_col or not assessment_col:
-        finish_sheet(ws, len(SUMMARY_HEADERS), 0, widths)
+        finish_sheet(ws, SUMMARY_HEADERS, 0, widths)
         return 0
 
     select_parts = [
@@ -150,7 +150,7 @@ def write_late_submissions_summary(
         order_columns=["programme", "course_shortname", "assessment_name"],
     )
     if not built:
-        finish_sheet(ws, len(SUMMARY_HEADERS), 0, widths)
+        finish_sheet(ws, SUMMARY_HEADERS, 0, widths)
         return 0
 
     query, params = built
@@ -204,7 +204,7 @@ def write_late_submissions_summary(
             append_data_row(ws, values)
             count += 1
 
-    finish_sheet(ws, len(SUMMARY_HEADERS), count, widths)
+    finish_sheet(ws, SUMMARY_HEADERS, count, widths)
     return count
 
 
@@ -280,7 +280,7 @@ def write_late_submission_details(
         append_data_row(ws, values)
         count += 1
 
-    finish_sheet(ws, len(DETAIL_HEADERS), count, widths)
+    finish_sheet(ws, DETAIL_HEADERS, count, widths)
     return count
 
 

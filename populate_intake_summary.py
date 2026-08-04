@@ -170,14 +170,14 @@ def write_intake_summary(
     try:
         student_cols = _mart_columns(conn, schema, TABLE_STUDENT)
     except duckdb.CatalogException:
-        finish_sheet(ws, len(SUMMARY_HEADERS), 0, widths)
+        finish_sheet(ws, SUMMARY_HEADERS, 0, widths)
         return 0
 
     programme_col = _pick_first_mart_column(
         student_cols, ("programme", "program_code", "course_prefix")
     )
     if not programme_col:
-        finish_sheet(ws, len(SUMMARY_HEADERS), 0, widths)
+        finish_sheet(ws, SUMMARY_HEADERS, 0, widths)
         return 0
 
     never_accessed = _inactivity_predicate_sql(student_cols, "never")
@@ -283,7 +283,7 @@ def write_intake_summary(
             append_data_row(ws, values)
             count += 1
 
-    finish_sheet(ws, len(SUMMARY_HEADERS), count, widths)
+    finish_sheet(ws, SUMMARY_HEADERS, count, widths)
     return count
 
 

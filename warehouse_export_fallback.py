@@ -198,7 +198,7 @@ def build_workbook_offering_fallback(
         "",
     ]
     append_data_row(ws_prog, prog_values)
-    finish_sheet(ws_prog, len(PROGRAMME_SUMMARY_HEADERS), 1)
+    finish_sheet(ws_prog, PROGRAMME_SUMMARY_HEADERS, 1)
 
     ws_stu = wb.create_sheet(title="Student Summary"[:31])
     stu_headers = ["Programme", "Student No", "Student", "Email", "Modules"]
@@ -214,7 +214,7 @@ def build_workbook_offering_fallback(
                 format_cell(row.get("modules")),
             ],
         )
-    finish_sheet(ws_stu, len(stu_headers), len(students))
+    finish_sheet(ws_stu, stu_headers, len(students))
 
     ws_mod = wb.create_sheet(title="Module Summary"[:31])
     mod_headers = ["Programme", "Module Code", "Module", "Students"]
@@ -229,7 +229,7 @@ def build_workbook_offering_fallback(
                 format_cell(row.get("students")),
             ],
         )
-    finish_sheet(ws_mod, len(mod_headers), len(modules))
+    finish_sheet(ws_mod, mod_headers, len(modules))
 
     mart_codes = list(programme_codes or [])
     mart_schema = schema
@@ -275,7 +275,7 @@ def build_workbook_offering_fallback(
             ],
         )
         grade_count += 1
-    finish_sheet(ws_det, len(det_headers), grade_count)
+    finish_sheet(ws_det, det_headers, grade_count)
 
     _mart_sheet("Missed Assessments", write_missed_assessments, "Missed Assessments")
     _mart_sheet("Upcoming Deadlines", write_upcoming_deadlines, "Upcoming Deadlines")
