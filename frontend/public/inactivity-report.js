@@ -6,6 +6,8 @@ const exportProgressEl = document.getElementById("exportProgress");
 const progressStageTextEl = document.getElementById("progressStageText");
 const progressElapsedEl = document.getElementById("progressElapsed");
 const progressFillEl = document.getElementById("progressFill");
+const dateFromEl = document.getElementById("dateFrom");
+const dateToEl = document.getElementById("dateTo");
 const STAGE_PROGRESS = {
   queued: 10,
   excel: 60,
@@ -39,9 +41,7 @@ function initCustomDropdown(dropdownEl, placeholder) {
     if (loading) {
       const item = document.createElement("li");
       item.className = "dropdown-option loading";
-      item.textContent = placeholder.includes("category")
-        ? "Loading categories..."
-        : "Loading programmes...";
+      item.textContent = "Loading...";
       menu.appendChild(item);
       return;
     }
@@ -57,7 +57,10 @@ function initCustomDropdown(dropdownEl, placeholder) {
       item.className = "dropdown-option";
       if (option.value === selectedValue) item.classList.add("selected");
       item.setAttribute("role", "option");
-      item.setAttribute("aria-selected", option.value === selectedValue ? "true" : "false");
+      item.setAttribute(
+        "aria-selected",
+        option.value === selectedValue ? "true" : "false"
+      );
       item.textContent = option.label;
       item.addEventListener("click", () => {
         selectedValue = option.value;
@@ -75,8 +78,9 @@ function initCustomDropdown(dropdownEl, placeholder) {
     const isOpen = dropdownEl.classList.contains("open");
     document.querySelectorAll(".custom-dropdown.open").forEach((openEl) => {
       openEl.classList.remove("open");
-      const openTrigger = openEl.querySelector(".dropdown-trigger");
-      openTrigger?.setAttribute("aria-expanded", "false");
+      openEl
+        .querySelector(".dropdown-trigger")
+        ?.setAttribute("aria-expanded", "false");
     });
     if (!isOpen) {
       dropdownEl.classList.add("open");
@@ -98,10 +102,9 @@ function initCustomDropdown(dropdownEl, placeholder) {
   searchInput?.addEventListener("input", () => {
     if (disabled) return;
     const term = searchInput.value.trim().toLowerCase();
-    filteredOptions = options.filter((option) => {
-      if (!option.value) return true;
-      return option.label.toLowerCase().includes(term);
-    });
+    filteredOptions = options.filter((option) =>
+      option.label.toLowerCase().includes(term)
+    );
     renderOptions();
   });
 
@@ -137,10 +140,6 @@ function initCustomDropdown(dropdownEl, placeholder) {
     },
     getValue() {
       return selectedValue;
-    },
-    getSelectedLabel() {
-      const match = options.find((option) => option.value === selectedValue);
-      return match?.label || "";
     }
   };
 }
@@ -161,30 +160,26 @@ function initMultiSelectDropdown(dropdownEl, placeholder) {
     return options.filter((option) => option.value);
   }
 
-  function formatTriggerLabel() {
+  function updateTrigger() {
     const selected = selectableOptions().filter((option) =>
       selectedValues.has(option.value)
     );
-    if (!selected.length) return placeholder;
-    if (selected.length === 1) return selected[0].label;
-    if (selected.length === selectableOptions().length) {
-      return `All programmes (${selected.length})`;
+    if (!selected.length) {
+      valueEl.textContent = placeholder;
+      return;
     }
-    return `${selected.length} programmes selected`;
-  }
-
-  function updateTrigger() {
-    valueEl.textContent = formatTriggerLabel();
+    if (selected.length === 1) {
+      valueEl.textContent = selected[0].label;
+      return;
+    }
+    valueEl.textContent = `${selected.length} selected`;
   }
 
   function notifyChange() {
-    if (typeof onSelect === "function") {
-      onSelect(getValues());
-    }
+    if (typeof onSelect === "function") onSelect(getValues());
   }
 
   function toggleValue(value) {
-    if (!value) return;
     if (selectedValues.has(value)) selectedValues.delete(value);
     else selectedValues.add(value);
     updateTrigger();
@@ -192,9 +187,9 @@ function initMultiSelectDropdown(dropdownEl, placeholder) {
     notifyChange();
   }
 
-  function setAllSelected(selectAll) {
+  function setAllSelected(checked) {
     selectedValues = new Set();
-    if (selectAll) {
+    if (checked) {
       selectableOptions().forEach((option) => selectedValues.add(option.value));
     }
     updateTrigger();
@@ -217,14 +212,14 @@ function initMultiSelectDropdown(dropdownEl, placeholder) {
     if (loading) {
       const item = document.createElement("li");
       item.className = "dropdown-option loading";
-      item.textContent = "Loading programmes...";
+      item.textContent = "Loading...";
       menu.appendChild(item);
       return;
     }
     if (!options.length) {
       const item = document.createElement("li");
       item.className = "dropdown-option empty";
-      item.textContent = "No programmes available";
+      item.textContent = "No options available";
       menu.appendChild(item);
       return;
     }
@@ -236,7 +231,6 @@ function initMultiSelectDropdown(dropdownEl, placeholder) {
         selectable.every((option) => selectedValues.has(option.value));
       const action = document.createElement("li");
       action.className = "dropdown-option action-row";
-      action.setAttribute("role", "option");
       const actionRow = document.createElement("div");
       actionRow.className = "dropdown-option-row";
       const actionCheckbox = document.createElement("input");
@@ -246,9 +240,7 @@ function initMultiSelectDropdown(dropdownEl, placeholder) {
       actionCheckbox.indeterminate =
         !allSelected &&
         selectable.some((option) => selectedValues.has(option.value));
-      actionCheckbox.addEventListener("click", (event) => {
-        event.stopPropagation();
-      });
+      actionCheckbox.addEventListener("click", (event) => event.stopPropagation());
       actionCheckbox.addEventListener("change", () => {
         setAllSelected(actionCheckbox.checked);
       });
@@ -279,21 +271,14 @@ function initMultiSelectDropdown(dropdownEl, placeholder) {
       const isSelected = selectedValues.has(option.value);
       item.className = "dropdown-option";
       if (isSelected) item.classList.add("selected");
-      item.setAttribute("role", "option");
-      item.setAttribute("aria-selected", isSelected ? "true" : "false");
-
       const row = document.createElement("div");
       row.className = "dropdown-option-row";
       const checkbox = document.createElement("input");
       checkbox.type = "checkbox";
       checkbox.className = "dropdown-checkbox";
       checkbox.checked = isSelected;
-      checkbox.addEventListener("click", (event) => {
-        event.stopPropagation();
-      });
-      checkbox.addEventListener("change", () => {
-        toggleValue(option.value);
-      });
+      checkbox.addEventListener("click", (event) => event.stopPropagation());
+      checkbox.addEventListener("change", () => toggleValue(option.value));
       const label = document.createElement("span");
       label.className = "dropdown-option-label";
       label.textContent = option.label;
@@ -320,8 +305,9 @@ function initMultiSelectDropdown(dropdownEl, placeholder) {
     document.querySelectorAll(".custom-dropdown.open").forEach((openEl) => {
       if (openEl === dropdownEl) return;
       openEl.classList.remove("open");
-      const openTrigger = openEl.querySelector(".dropdown-trigger");
-      openTrigger?.setAttribute("aria-expanded", "false");
+      openEl
+        .querySelector(".dropdown-trigger")
+        ?.setAttribute("aria-expanded", "false");
     });
     if (!isOpen) {
       dropdownEl.classList.add("open");
@@ -335,10 +321,6 @@ function initMultiSelectDropdown(dropdownEl, placeholder) {
 
   document.addEventListener("click", (event) => {
     if (!dropdownEl.contains(event.target)) close();
-  });
-
-  document.addEventListener("keydown", (event) => {
-    if (event.key === "Escape") close();
   });
 
   searchInput?.addEventListener("input", () => {
@@ -381,11 +363,7 @@ function initMultiSelectDropdown(dropdownEl, placeholder) {
     onChange(handler) {
       onSelect = handler;
     },
-    getValues,
-    getValue() {
-      const values = getValues();
-      return values.length === 1 ? values[0] : "";
-    }
+    getValues
   };
 }
 
@@ -396,9 +374,7 @@ async function readResponseJson(response) {
   }
   const text = await response.text();
   if (!text.trim()) {
-    throw new Error(
-      `Server returned an empty response (HTTP ${response.status}). The export may have timed out — try again.`
-    );
+    throw new Error(`Server returned an empty response (HTTP ${response.status}).`);
   }
   try {
     return JSON.parse(text);
@@ -443,14 +419,64 @@ function setProgressUi({
   if (progressStageTextEl) progressStageTextEl.textContent = text;
   if (progressElapsedEl) progressElapsedEl.textContent = formatElapsed(elapsedMs);
   if (progressFillEl) {
-    const pct = Number(STAGE_PROGRESS[stage] || 5);
-    progressFillEl.style.width = `${pct}%`;
+    progressFillEl.style.width = `${Number(STAGE_PROGRESS[stage] || 5)}%`;
   }
 }
 
 function hideProgressUi() {
   if (!exportProgressEl) return;
   exportProgressEl.classList.remove("visible", "failed", "done");
+}
+
+function selectedPeriodValue() {
+  const checked = document.querySelector(
+    'input[name="inactivityPeriod"]:checked'
+  );
+  return checked?.value || "";
+}
+
+function syncCustomDateInputs() {
+  const isCustom = selectedPeriodValue() === "custom";
+  if (dateFromEl) dateFromEl.disabled = !isCustom;
+  if (dateToEl) dateToEl.disabled = !isCustom;
+  document
+    .getElementById("dateFromField")
+    ?.classList.toggle("is-disabled", !isCustom);
+  document
+    .getElementById("dateToField")
+    ?.classList.toggle("is-disabled", !isCustom);
+}
+
+function resolveInactivityPeriod() {
+  const selected = selectedPeriodValue();
+  if (!selected) {
+    throw new Error("Select an inactivity period first.");
+  }
+  if (selected !== "custom") return selected;
+
+  const fromValue = String(dateFromEl?.value || "").trim();
+  const toValue = String(dateToEl?.value || "").trim();
+  if (!fromValue) {
+    throw new Error("Select a From date for the custom inactivity period.");
+  }
+
+  const fromDate = new Date(`${fromValue}T00:00:00`);
+  const toDate = toValue
+    ? new Date(`${toValue}T00:00:00`)
+    : new Date();
+  if (Number.isNaN(fromDate.getTime()) || Number.isNaN(toDate.getTime())) {
+    throw new Error("Custom period dates are invalid.");
+  }
+  if (toDate < fromDate) {
+    throw new Error("To date must be on or after the From date.");
+  }
+
+  const msPerDay = 1000 * 60 * 60 * 24;
+  const days = Math.max(
+    1,
+    Math.round((toDate.getTime() - fromDate.getTime()) / msPerDay)
+  );
+  return String(days);
 }
 
 async function loadCategories(categoryDropdown) {
@@ -480,10 +506,10 @@ async function loadProgrammes(programmeDropdown, categoryName) {
       `/api/programmes?categoryName=${encodeURIComponent(categoryName)}`
     );
     programmeDropdown.setOptions(
-      programmes.map((p) => {
-        const code = p.programme_code;
-        return { value: code, label: code };
-      }),
+      programmes.map((p) => ({
+        value: p.programme_code,
+        label: p.programme_code
+      })),
       "Select programme(s)"
     );
   } finally {
@@ -520,17 +546,28 @@ function resetModules(moduleDropdown, hintEl) {
 
 startClock();
 loadSignedInUser();
+syncCustomDateInputs();
 
-const categoryDropdownEl = document.querySelector('[data-dropdown="category"]');
-const programmeDropdownEl = document.querySelector('[data-dropdown="programme"]');
-const moduleDropdownEl = document.querySelector('[data-dropdown="module"]');
-const moduleHintEl = document.getElementById("moduleHint");
-const categoryDropdown = initCustomDropdown(categoryDropdownEl, "Select category");
+document
+  .querySelectorAll('input[name="inactivityPeriod"]')
+  .forEach((input) => {
+    input.addEventListener("change", syncCustomDateInputs);
+  });
+
+const categoryDropdown = initCustomDropdown(
+  document.querySelector('[data-dropdown="category"]'),
+  "Select category"
+);
 const programmeDropdown = initMultiSelectDropdown(
-  programmeDropdownEl,
+  document.querySelector('[data-dropdown="programme"]'),
   "Select programme(s)"
 );
-const moduleDropdown = initMultiSelectDropdown(moduleDropdownEl, "Select module(s)");
+const moduleDropdown = initMultiSelectDropdown(
+  document.querySelector('[data-dropdown="module"]'),
+  "Select module(s)"
+);
+const moduleHintEl = document.getElementById("moduleHint");
+
 programmeDropdown.setDisabled(true);
 moduleDropdown.setDisabled(true);
 
@@ -571,21 +608,26 @@ loadCategories(categoryDropdown).catch((error) => {
 exportBtn?.addEventListener("click", async () => {
   const categoryName = categoryDropdown.getValue();
   const programmeCodes = programmeDropdown.getValues();
-  if (!categoryName || !programmeCodes.length) {
-    window.alert("Select a category and at least one programme first.");
+
+  if (!categoryName) {
+    window.alert("Select a category (intake) first.");
     return;
   }
-  const originalText = exportBtn.textContent;
+
+  let inactivityPeriod;
+  try {
+    inactivityPeriod = resolveInactivityPeriod();
+  } catch (error) {
+    window.alert(error.message || error);
+    return;
+  }
+
+  const originalHtml = exportBtn.innerHTML;
   const startedAt = Date.now();
   let elapsedTicker = null;
   exportBtn.disabled = true;
   exportBtn.textContent = "Starting...";
-  if (exportStatusEl) {
-    exportStatusEl.textContent =
-      programmeCodes.length === 1
-        ? "Starting export job..."
-        : `Starting batch export for ${programmeCodes.length} programmes...`;
-  }
+  if (exportStatusEl) exportStatusEl.textContent = "Starting export job...";
   setProgressUi({
     visible: true,
     stage: "queued",
@@ -593,17 +635,20 @@ exportBtn?.addEventListener("click", async () => {
     elapsedMs: 0
   });
   elapsedTicker = setInterval(() => {
-    if (progressElapsedEl) progressElapsedEl.textContent = formatElapsed(Date.now() - startedAt);
+    if (progressElapsedEl) {
+      progressElapsedEl.textContent = formatElapsed(Date.now() - startedAt);
+    }
   }, 1000);
+
   try {
-    const startResponse = await fetch("/api/export-excel/start", {
+    const startResponse = await fetch("/api/export-inactivity-report/start", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       credentials: "same-origin",
       body: JSON.stringify({
         categoryName,
         programmeCodes,
-        programmeCode: programmeCodes.length === 1 ? programmeCodes[0] : undefined
+        inactivityPeriod
       })
     });
     const startPayload = await readResponseJson(startResponse);
@@ -636,8 +681,7 @@ exportBtn?.addEventListener("click", async () => {
 
       if (job?.status === "done") break;
       if (job?.status === "failed") {
-        const detail = job?.error || job?.message || "Export job failed";
-        throw new Error(detail);
+        throw new Error(job?.error || job?.message || "Export job failed");
       }
       await new Promise((resolve) => setTimeout(resolve, 1500));
     }
@@ -654,30 +698,37 @@ exportBtn?.addEventListener("click", async () => {
         const payload = await readResponseJson(downloadResponse);
         message = payload?.error || message;
       } catch (parseError) {
-        message = parseError?.message || `${message} (HTTP ${downloadResponse.status})`;
+        message =
+          parseError?.message || `${message} (HTTP ${downloadResponse.status})`;
       }
       throw new Error(message);
     }
+
     const blob = await downloadResponse.blob();
     const exportMs = downloadResponse.headers.get("x-export-ms");
     const totalMs = downloadResponse.headers.get("x-total-ms");
     const downloadUrl = URL.createObjectURL(blob);
     const a = document.createElement("a");
     a.href = downloadUrl;
-    const fallbackName =
-      programmeCodes.length === 1
-        ? `gradebook_${programmeCodes[0]}_${Date.now()}.xlsx`
-        : `gradebook_batch_${programmeCodes.length}prog_${Date.now()}.xlsx`;
-    a.download = latestJob?.fileName || fallbackName;
+    a.download =
+      latestJob?.fileName ||
+      `inactivity_report_${inactivityPeriod}d_${categoryName.replace(/\s+/g, "_")}_${Date.now()}.xlsx`;
     document.body.appendChild(a);
     a.click();
     a.remove();
     URL.revokeObjectURL(downloadUrl);
+
     if (exportStatusEl) {
       const timingParts = [];
-      if (exportMs) timingParts.push(`excel ${Math.round(Number(exportMs) / 1000)}s`);
-      if (totalMs) timingParts.push(`total ${Math.round(Number(totalMs) / 1000)}s`);
-      const timingText = timingParts.length ? ` (${timingParts.join(" | ")})` : "";
+      if (exportMs) {
+        timingParts.push(`excel ${Math.round(Number(exportMs) / 1000)}s`);
+      }
+      if (totalMs) {
+        timingParts.push(`total ${Math.round(Number(totalMs) / 1000)}s`);
+      }
+      const timingText = timingParts.length
+        ? ` (${timingParts.join(" | ")})`
+        : "";
       exportStatusEl.textContent = `Done. Excel download started.${timingText}`;
     }
     setProgressUi({
@@ -689,7 +740,9 @@ exportBtn?.addEventListener("click", async () => {
     });
   } catch (error) {
     window.alert(`Export failed: ${error.message || error}`);
-    if (exportStatusEl) exportStatusEl.textContent = `Failed: ${error.message || error}`;
+    if (exportStatusEl) {
+      exportStatusEl.textContent = `Failed: ${error.message || error}`;
+    }
     setProgressUi({
       visible: true,
       stage: "error",
@@ -700,9 +753,7 @@ exportBtn?.addEventListener("click", async () => {
   } finally {
     if (elapsedTicker) clearInterval(elapsedTicker);
     exportBtn.disabled = false;
-    exportBtn.textContent = originalText;
-    setTimeout(() => {
-      hideProgressUi();
-    }, 5000);
+    exportBtn.innerHTML = originalHtml;
+    setTimeout(() => hideProgressUi(), 5000);
   }
 });

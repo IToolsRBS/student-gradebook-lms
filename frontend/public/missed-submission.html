@@ -1,0 +1,322 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Missed Submission Report | Regent Business School</title>
+    <link rel="stylesheet" href="/styles.css" />
+  </head>
+  <body>
+    <div class="page-shell">
+      <header class="site-header">
+        <a class="brand" href="/" aria-label="Report Exports home">
+          <img src="/Logo.png" alt="" class="brand-logo" />
+          <span class="brand-text">
+            <span class="brand-name">Regent Business School</span>
+            <span class="brand-sub">Report Exports</span>
+          </span>
+        </a>
+        <nav class="site-nav" aria-label="Primary">
+          <a class="nav-pill" href="/">All Reports</a>
+          <a class="nav-pill" href="/gradebook">Gradebook</a>
+          <a class="nav-pill" href="/intake-summary">Intake Summary</a>
+          <a class="nav-pill" href="/activity-completion">Activity Completion</a>
+          <a class="nav-pill" href="/inactivity-report">Inactivity</a>
+          <a
+            class="nav-pill is-active"
+            href="/missed-submission"
+            aria-current="page"
+            >Missed Submissions</a
+          >
+          <a class="nav-pill" href="/late-submission">Late Submissions</a>
+        </nav>
+        <div class="top-bar-actions">
+          <div class="user-bar" id="userBar" hidden>
+            <span id="userName" class="user-name"></span>
+            <a href="/auth/logout" class="logout-link">Sign out</a>
+          </div>
+          <div class="time-now" id="timeNow">
+            <div class="time-date" id="timeDate">--</div>
+            <div class="time-clock" id="timeClock">--:--</div>
+          </div>
+        </div>
+      </header>
+
+      <main class="report-page">
+        <nav class="report-crumb" aria-label="Breadcrumb">
+          <a href="/" class="crumb-home" aria-label="All reports">
+            <svg
+              viewBox="0 0 24 24"
+              fill="none"
+              stroke="currentColor"
+              stroke-width="2"
+              stroke-linecap="round"
+              stroke-linejoin="round"
+              aria-hidden="true"
+            >
+              <path d="M3 10.5 12 3l9 7.5" />
+              <path d="M5 9.5V21h14V9.5" />
+            </svg>
+          </a>
+          <span class="crumb-sep" aria-hidden="true">/</span>
+          <a href="/">Reports</a>
+          <span class="crumb-sep" aria-hidden="true">/</span>
+          <span class="crumb-current">Missed Submission Report</span>
+        </nav>
+
+        <div class="report-intro">
+          <h1>Missed Submission Report</h1>
+          <p>Export assessments that were not submitted by the due date.</p>
+        </div>
+
+        <section class="card report-card">
+          <div class="filters">
+            <div class="filter-field">
+              <label for="categoryDropdownBtn">Category (Intake)</label>
+              <div class="custom-dropdown" data-dropdown="category">
+                <button
+                  id="categoryDropdownBtn"
+                  class="dropdown-trigger"
+                  type="button"
+                  aria-haspopup="listbox"
+                  aria-expanded="false"
+                >
+                  <span class="dropdown-value">Select category</span>
+                  <span class="dropdown-arrow" aria-hidden="true"></span>
+                </button>
+                <input
+                  class="dropdown-search"
+                  type="text"
+                  placeholder="Search category..."
+                  aria-label="Search category"
+                />
+                <ul
+                  class="dropdown-menu"
+                  role="listbox"
+                  aria-label="Category options"
+                ></ul>
+              </div>
+            </div>
+
+            <div class="filter-field">
+              <label for="programmeDropdownBtn">Programme(s)</label>
+              <div
+                class="custom-dropdown multi-select"
+                data-dropdown="programme"
+              >
+                <button
+                  id="programmeDropdownBtn"
+                  class="dropdown-trigger"
+                  type="button"
+                  aria-haspopup="listbox"
+                  aria-expanded="false"
+                  aria-multiselectable="true"
+                >
+                  <span class="dropdown-value">Select programme(s)</span>
+                  <span class="dropdown-arrow" aria-hidden="true"></span>
+                </button>
+                <input
+                  class="dropdown-search"
+                  type="text"
+                  placeholder="Search programme..."
+                  aria-label="Search programme"
+                />
+                <ul
+                  class="dropdown-menu"
+                  role="listbox"
+                  aria-label="Programme options"
+                  aria-multiselectable="true"
+                ></ul>
+              </div>
+            </div>
+
+            <div class="filter-field">
+              <label for="moduleDropdownBtn">Module(s)</label>
+              <div
+                class="custom-dropdown multi-select"
+                data-dropdown="module"
+              >
+                <button
+                  id="moduleDropdownBtn"
+                  class="dropdown-trigger"
+                  type="button"
+                  aria-haspopup="listbox"
+                  aria-expanded="false"
+                  aria-multiselectable="true"
+                >
+                  <span class="dropdown-value">Select module(s)</span>
+                  <span class="dropdown-arrow" aria-hidden="true"></span>
+                </button>
+                <input
+                  class="dropdown-search"
+                  type="text"
+                  placeholder="Search module..."
+                  aria-label="Search module"
+                />
+                <ul
+                  class="dropdown-menu"
+                  role="listbox"
+                  aria-label="Module options"
+                  aria-multiselectable="true"
+                ></ul>
+              </div>
+              <p class="filter-hint" id="moduleHint">
+                <span class="filter-hint-icon" aria-hidden="true">i</span>
+                Select one or more programmes first to view available modules.
+                Leave blank to include all modules.
+              </p>
+            </div>
+
+            <div class="filter-field">
+              <label for="assessmentTypeDropdownBtn">Assessment Type</label>
+              <div class="custom-dropdown" data-dropdown="assessmentType">
+                <button
+                  id="assessmentTypeDropdownBtn"
+                  class="dropdown-trigger"
+                  type="button"
+                  aria-haspopup="listbox"
+                  aria-expanded="false"
+                >
+                  <span class="dropdown-value"
+                    >All Assessment Types (Quiz, Assignment, Exam)</span
+                  >
+                  <span class="dropdown-arrow" aria-hidden="true"></span>
+                </button>
+                <input
+                  class="dropdown-search"
+                  type="text"
+                  placeholder="Search assessment type..."
+                  aria-label="Search assessment type"
+                />
+                <ul
+                  class="dropdown-menu"
+                  role="listbox"
+                  aria-label="Assessment type options"
+                ></ul>
+              </div>
+            </div>
+
+            <div class="filter-field filter-field-full">
+              <label for="assessmentDropdownBtn">Assessment (Optional)</label>
+              <div class="custom-dropdown" data-dropdown="assessment">
+                <button
+                  id="assessmentDropdownBtn"
+                  class="dropdown-trigger"
+                  type="button"
+                  aria-haspopup="listbox"
+                  aria-expanded="false"
+                >
+                  <span class="dropdown-value">Select assessment</span>
+                  <span class="dropdown-arrow" aria-hidden="true"></span>
+                </button>
+                <input
+                  class="dropdown-search"
+                  type="text"
+                  placeholder="Search assessment..."
+                  aria-label="Search assessment"
+                />
+                <ul
+                  class="dropdown-menu"
+                  role="listbox"
+                  aria-label="Assessment options"
+                ></ul>
+              </div>
+            </div>
+
+            <fieldset class="filter-field filter-field-full period-fieldset">
+              <legend class="period-legend">Due Date Range (Optional)</legend>
+              <div class="due-date-grid">
+                <div class="filter-field">
+                  <label for="dateFrom">From</label>
+                  <div class="date-input-wrap">
+                    <input
+                      id="dateFrom"
+                      class="date-input"
+                      type="date"
+                      aria-label="Due date range start"
+                    />
+                    <span class="date-input-icon" aria-hidden="true">
+                      <svg
+                        viewBox="0 0 24 24"
+                        fill="none"
+                        stroke="currentColor"
+                        stroke-width="2"
+                        stroke-linecap="round"
+                        stroke-linejoin="round"
+                      >
+                        <rect x="3" y="4" width="18" height="18" rx="2" />
+                        <line x1="16" y1="2" x2="16" y2="6" />
+                        <line x1="8" y1="2" x2="8" y2="6" />
+                        <line x1="3" y1="10" x2="21" y2="10" />
+                      </svg>
+                    </span>
+                  </div>
+                </div>
+                <div class="filter-field">
+                  <label for="dateTo">To</label>
+                  <div class="date-input-wrap">
+                    <input
+                      id="dateTo"
+                      class="date-input"
+                      type="date"
+                      aria-label="Due date range end"
+                    />
+                    <span class="date-input-icon" aria-hidden="true">
+                      <svg
+                        viewBox="0 0 24 24"
+                        fill="none"
+                        stroke="currentColor"
+                        stroke-width="2"
+                        stroke-linecap="round"
+                        stroke-linejoin="round"
+                      >
+                        <rect x="3" y="4" width="18" height="18" rx="2" />
+                        <line x1="16" y1="2" x2="16" y2="6" />
+                        <line x1="8" y1="2" x2="8" y2="6" />
+                        <line x1="3" y1="10" x2="21" y2="10" />
+                      </svg>
+                    </span>
+                  </div>
+                </div>
+              </div>
+            </fieldset>
+          </div>
+
+          <button id="exportBtn" class="export-btn export-btn-icon" type="button">
+            <span>Export Missed Submission Report</span>
+            <svg
+              class="export-btn-glyph"
+              viewBox="0 0 24 24"
+              fill="none"
+              stroke="currentColor"
+              stroke-width="2"
+              stroke-linecap="round"
+              stroke-linejoin="round"
+              aria-hidden="true"
+            >
+              <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" />
+              <polyline points="7 10 12 15 17 10" />
+              <line x1="12" y1="15" x2="12" y2="3" />
+            </svg>
+          </button>
+          <div id="exportStatus" class="export-status" aria-live="polite"></div>
+          <div id="exportProgress" class="export-progress" aria-live="polite">
+            <div class="export-progress-head">
+              <span
+                id="progressSpinner"
+                class="progress-spinner"
+                aria-hidden="true"
+              ></span>
+              <span id="progressStageText">Waiting to start...</span>
+              <span id="progressElapsed" class="progress-elapsed">00:00</span>
+            </div>
+            <div class="progress-track">
+              <div id="progressFill" class="progress-fill"></div>
+            </div>
+          </div>
+        </section>
+      </main>
+    </div>
+    <script type="module" src="/missed-submission.js"></script>
+  </body>
+</html>

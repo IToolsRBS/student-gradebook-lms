@@ -120,6 +120,8 @@ def _build_missed_filter_sql(
     assessment_types: Sequence[str],
     assessments: Sequence[str],
     statuses: Sequence[str],
+    due_from: str | None = None,
+    due_to: str | None = None,
     order_columns: Sequence[str] | None = None,
     select_sql: str = "*",
     group_by_sql: str | None = None,
@@ -151,6 +153,20 @@ def _build_missed_filter_sql(
             )
         )
 
+    due_col = _pick_first_mart_column(
+        mart_cols, ("due_date", "due_at", "effective_deadline_at")
+    )
+    if due_from and due_col:
+        where_parts.append(
+            f'TRY_CAST("{due_col}" AS DATE) >= TRY_CAST(? AS DATE)'
+        )
+        params.append(due_from)
+    if due_to and due_col:
+        where_parts.append(
+            f'TRY_CAST("{due_col}" AS DATE) <= TRY_CAST(? AS DATE)'
+        )
+        params.append(due_to)
+
     base_where = " AND ".join(where_parts) if where_parts else "1=1"
     query = f"SELECT {select_sql} FROM {relation} WHERE {base_where}"
     if group_by_sql:
@@ -177,6 +193,8 @@ def iter_filtered_missed_rows(
     assessment_types: Sequence[str],
     assessments: Sequence[str],
     statuses: Sequence[str],
+    due_from: str | None = None,
+    due_to: str | None = None,
     order_columns: Sequence[str] | None = None,
     chunk_size: int = FETCH_CHUNK_SIZE,
 ) -> Iterator[dict[str, Any]]:
@@ -189,6 +207,8 @@ def iter_filtered_missed_rows(
         assessment_types=assessment_types,
         assessments=assessments,
         statuses=statuses,
+        due_from=due_from,
+        due_to=due_to,
         order_columns=order_columns,
     )
     if not built:
@@ -215,6 +235,8 @@ def write_missed_submissions_summary(
     assessment_types: Sequence[str],
     assessments: Sequence[str],
     statuses: Sequence[str],
+    due_from: str | None = None,
+    due_to: str | None = None,
 ) -> int:
     write_headers(ws, SUMMARY_HEADERS)
     widths = [max(12, min(len(h) + 2, MAX_COLUMN_WIDTH)) for h in SUMMARY_HEADERS]
@@ -274,6 +296,8 @@ def write_missed_submissions_summary(
         assessment_types=assessment_types,
         assessments=assessments,
         statuses=statuses,
+        due_from=due_from,
+        due_to=due_to,
         select_sql=", ".join(select_parts),
         group_by_sql=", ".join(group_parts),
         order_columns=["programme", "module_code", "assessment"],
@@ -348,6 +372,8 @@ def write_missed_assessment_details(
     assessment_types: Sequence[str],
     assessments: Sequence[str],
     statuses: Sequence[str],
+    due_from: str | None = None,
+    due_to: str | None = None,
 ) -> int:
     write_headers(ws, DETAIL_HEADERS)
     widths = [max(12, min(len(h) + 2, MAX_COLUMN_WIDTH)) for h in DETAIL_HEADERS]
@@ -363,6 +389,8 @@ def write_missed_assessment_details(
         assessment_types=assessment_types,
         assessments=assessments,
         statuses=statuses,
+        due_from=due_from,
+        due_to=due_to,
         order_columns=["programme", "days_overdue", "student_no", "module_code"],
     ):
         values = [
@@ -387,6 +415,8 @@ def build_workbook(
     assessment_types: Sequence[str],
     assessments: Sequence[str],
     statuses: Sequence[str],
+    due_from: str | None = None,
+    due_to: str | None = None,
 ) -> Path:
     wb = Workbook(write_only=True)
 
@@ -401,6 +431,8 @@ def build_workbook(
         assessment_types=assessment_types,
         assessments=assessments,
         statuses=statuses,
+        due_from=due_from,
+        due_to=due_to,
     )
     gc.collect()
 
@@ -415,6 +447,8 @@ def build_workbook(
         assessment_types=assessment_types,
         assessments=assessments,
         statuses=statuses,
+        due_from=due_from,
+        due_to=due_to,
     )
     gc.collect()
 
@@ -482,6 +516,16 @@ def main() -> None:
         help="Status filter on missed mart (repeatable; omit = all)",
     )
     parser.add_argument(
+        "--due-from",
+        default=None,
+        help="Optional due date lower bound (YYYY-MM-DD)",
+    )
+    parser.add_argument(
+        "--due-to",
+        default=None,
+        help="Optional due date upper bound (YYYY-MM-DD)",
+    )
+    parser.add_argument(
         "--warehouse-schema",
         default=None,
         help="Schema for gradebook marts (default: moodle_processed)",
@@ -505,6 +549,8 @@ def main() -> None:
         a.strip().upper() for a in _normalize_filter_values(args.assessments)
     ]
     statuses = _normalize_optional_statuses(args.statuses)
+    due_from = (args.due_from or "").strip() or None
+    due_to = (args.due_to or "").strip() or None
 
     schema = args.warehouse_schema or gradebook_schema() or DEFAULT_SCHEMA
     output_dir = Path(args.output_dir)
@@ -522,6 +568,8 @@ def main() -> None:
             assessment_types=assessment_types,
             assessments=assessments,
             statuses=statuses,
+            due_from=due_from,
+            due_to=due_to,
         )
     except Exception:
         import traceback

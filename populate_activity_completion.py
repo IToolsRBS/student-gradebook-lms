@@ -360,6 +360,8 @@ def _build_activity_filter_sql(
     assessment_types: Sequence[str],
     assessments: Sequence[str],
     statuses: Sequence[str],
+    due_from: str | None = None,
+    due_to: str | None = None,
     order_columns: Sequence[str] | None = None,
     select_sql: str = "*",
     group_by_sql: str | None = None,
@@ -383,6 +385,21 @@ def _build_activity_filter_sql(
         assessment_types=assessment_types,
         assessments=assessments,
     )
+
+    due_col = _pick_first_mart_column(
+        mart_cols, ("due_at", "effective_deadline_at", "due_date")
+    )
+    if due_from and due_col:
+        dim_where.append(
+            f'TRY_CAST("{due_col}" AS DATE) >= TRY_CAST(? AS DATE)'
+        )
+        params.append(due_from)
+    if due_to and due_col:
+        dim_where.append(
+            f'TRY_CAST("{due_col}" AS DATE) <= TRY_CAST(? AS DATE)'
+        )
+        params.append(due_to)
+
     base_where = " AND ".join(dim_where) if dim_where else "1=1"
 
     # Derive effective status first (handles missed-but-graded mart rows), then filter.
@@ -423,6 +440,8 @@ def iter_filtered_assessment_rows(
     assessment_types: Sequence[str],
     assessments: Sequence[str],
     statuses: Sequence[str],
+    due_from: str | None = None,
+    due_to: str | None = None,
     order_columns: Sequence[str] | None = None,
     chunk_size: int = FETCH_CHUNK_SIZE,
 ) -> Iterator[dict[str, Any]]:
@@ -435,6 +454,8 @@ def iter_filtered_assessment_rows(
         assessment_types=assessment_types,
         assessments=assessments,
         statuses=statuses,
+        due_from=due_from,
+        due_to=due_to,
         order_columns=order_columns,
     )
     if not built:

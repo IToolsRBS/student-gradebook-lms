@@ -659,6 +659,191 @@ def fetch_programmes(
     return rows
 
 
+def fetch_modules(
+    conn: duckdb.DuckDBPyConnection,
+    category_name: str,
+    programme_codes: Sequence[str],
+) -> list[dict[str, Any]]:
+    """
+    Distinct modules for a category + one or more programme codes.
+
+    Prefers gradebook_module_summary (module_code + module name). Falls back to
+    dim_courses shortnames for the selected offerings.
+    """
+    category_name = category_name.strip()
+    codes = [
+        str(code or "").strip().upper()
+        for code in programme_codes
+        if str(code or "").strip()
+    ]
+    codes = list(dict.fromkeys(codes))
+    if not category_name or not codes:
+        return []
+
+    rows = _fetch_modules_from_module_summary(conn, category_name, codes)
+    if rows:
+        return rows
+    return _fetch_modules_from_courses(conn, category_name, codes)
+
+
+def _fetch_modules_from_module_summary(
+    conn: duckdb.DuckDBPyConnection,
+    category_name: str,
+    programme_codes: Sequence[str],
+) -> list[dict[str, Any]]:
+    relation = _module_summary_relation(conn)
+    if not relation:
+        return []
+
+    cols = _table_columns(conn, relation)
+    if "programme" not in cols:
+        return []
+
+    code_col = (
+        "module_code"
+        if "module_code" in cols
+        else "course_shortname"
+        if "course_shortname" in cols
+        else None
+    )
+    name_col = (
+        "module"
+        if "module" in cols
+        else "module_name"
+        if "module_name" in cols
+        else None
+    )
+    if not code_col and not name_col:
+        return []
+
+    if code_col and name_col:
+        select_code = f"UPPER(TRIM(CAST({code_col} AS VARCHAR)))"
+        select_name = (
+            f"COALESCE(NULLIF(TRIM(CAST({name_col} AS VARCHAR)), ''), "
+            f"UPPER(TRIM(CAST({code_col} AS VARCHAR))))"
+        )
+        non_empty = (
+            f"(({code_col} IS NOT NULL AND TRIM(CAST({code_col} AS VARCHAR)) <> '') "
+            f"OR ({name_col} IS NOT NULL AND TRIM(CAST({name_col} AS VARCHAR)) <> ''))"
+        )
+    elif code_col:
+        select_code = f"UPPER(TRIM(CAST({code_col} AS VARCHAR)))"
+        select_name = select_code
+        non_empty = f"({code_col} IS NOT NULL AND TRIM(CAST({code_col} AS VARCHAR)) <> '')"
+    else:
+        select_code = f"UPPER(TRIM(CAST({name_col} AS VARCHAR)))"
+        select_name = f"TRIM(CAST({name_col} AS VARCHAR))"
+        non_empty = f"({name_col} IS NOT NULL AND TRIM(CAST({name_col} AS VARCHAR)) <> '')"
+
+    placeholders = ", ".join(["?"] * len(programme_codes))
+    params: list[Any] = [*programme_codes]
+    category_filter = ""
+    if "category_name" in cols:
+        category_filter = "AND TRIM(CAST(category_name AS VARCHAR)) = TRIM(?)"
+        params.append(category_name)
+
+    df = conn.execute(
+        f"""
+        SELECT DISTINCT
+            {select_code} AS module_code,
+            {select_name} AS module_name
+        FROM {relation}
+        WHERE programme IS NOT NULL
+          AND UPPER(TRIM(CAST(programme AS VARCHAR))) IN ({placeholders})
+          {category_filter}
+          AND {non_empty}
+        ORDER BY module_name, module_code
+        """,
+        params,
+    ).fetchdf()
+
+    return _rows_to_modules(df)
+
+
+def _fetch_modules_from_courses(
+    conn: duckdb.DuckDBPyConnection,
+    category_name: str,
+    programme_codes: Sequence[str],
+) -> list[dict[str, Any]]:
+    courses = qualified_relation(courses_schema(), "dim_courses")
+    dc_shortname = _coalesce_sql(
+        conn, courses, "dc", ("course_shortname", "shortname", "module_shortname")
+    )
+    cols = _table_columns(conn, courses)
+
+    if "fullname" in cols and "course_fullname" in cols:
+        name_expr = "TRIM(COALESCE(NULLIF(dc.fullname, ''), NULLIF(dc.course_fullname, ''), ''))"
+    elif "fullname" in cols:
+        name_expr = "TRIM(COALESCE(dc.fullname, ''))"
+    elif "course_fullname" in cols:
+        name_expr = "TRIM(COALESCE(dc.course_fullname, ''))"
+    else:
+        name_expr = f"TRIM(COALESCE({dc_shortname}, ''))"
+
+    placeholders = ", ".join(["?"] * len(programme_codes))
+    prefix_expr = f"UPPER(TRIM(split_part({dc_shortname}, '_', 1)))"
+
+    if "category_name" in cols:
+        df = conn.execute(
+            f"""
+            SELECT DISTINCT
+                UPPER(TRIM(COALESCE({dc_shortname}, ''))) AS module_code,
+                COALESCE(
+                    NULLIF({name_expr}, ''),
+                    UPPER(TRIM(COALESCE({dc_shortname}, '')))
+                ) AS module_name
+            FROM {courses} AS dc
+            WHERE TRIM(dc.category_name) = ?
+              AND {prefix_expr} IN ({placeholders})
+              AND TRIM(COALESCE({dc_shortname}, '')) <> ''
+            ORDER BY module_name, module_code
+            """,
+            [category_name, *programme_codes],
+        ).fetchdf()
+    else:
+        categories = qualified_relation(staging_schema(), "stg_moodle_categories")
+        cat_join = _category_course_join(conn, courses, categories)
+        df = conn.execute(
+            f"""
+            SELECT DISTINCT
+                UPPER(TRIM(COALESCE({cat_join["dc_shortname"]}, ''))) AS module_code,
+                COALESCE(
+                    NULLIF({name_expr}, ''),
+                    UPPER(TRIM(COALESCE({cat_join["dc_shortname"]}, '')))
+                ) AS module_name
+            FROM {courses} AS dc
+            INNER JOIN {categories} AS cat
+                ON CAST({cat_join["dc_category_id"]} AS BIGINT)
+                 = CAST({cat_join["cat_category_id"]} AS BIGINT)
+            WHERE TRIM(cat.category_name) = ?
+              AND UPPER(TRIM(split_part({cat_join["dc_shortname"]}, '_', 1)))
+                  IN ({placeholders})
+              AND TRIM(COALESCE({cat_join["dc_shortname"]}, '')) <> ''
+            ORDER BY module_name, module_code
+            """,
+            [category_name, *programme_codes],
+        ).fetchdf()
+
+    return _rows_to_modules(df)
+
+
+def _rows_to_modules(df: Any) -> list[dict[str, Any]]:
+    rows: list[dict[str, Any]] = []
+    seen: set[str] = set()
+    for row in df.to_dict("records"):
+        code = str(row.get("module_code") or "").strip()
+        name = str(row.get("module_name") or "").strip()
+        if not code or code.lower() == "nan":
+            continue
+        if code in seen:
+            continue
+        seen.add(code)
+        if not name or name.lower() == "nan":
+            name = code
+        rows.append({"module_code": code, "module_name": name})
+    return rows
+
+
 def _filter_programmes_with_gradebook(
     conn: duckdb.DuckDBPyConnection,
     category_name: str,

@@ -109,12 +109,20 @@ def _normalize_inactivity_period(raw: str | None) -> str:
         "noaccess": "never",
     }
     period = aliases.get(key)
-    if not period:
-        raise SystemExit(
-            f"Invalid --inactivity-period '{raw}'. "
-            f"Allowed: 7, 14, 30, never"
-        )
-    return period
+    if period:
+        return period
+    if key.isdigit() and int(key) > 0:
+        return str(int(key))
+    raise SystemExit(
+        f"Invalid --inactivity-period '{raw}'. "
+        f"Allowed: 7, 14, 30, never, or a positive day count"
+    )
+
+
+def _period_days(period: str) -> int | None:
+    if period == "never":
+        return None
+    return int(period)
 
 
 def _period_label(period: str) -> str:
@@ -189,7 +197,7 @@ def _inactivity_predicate_sql(
     if period == "never":
         return f"({never_pred})"
 
-    days = INACTIVITY_PERIODS[period]
+    days = _period_days(period)
     assert days is not None
     if days_col:
         inactive_days = (
@@ -826,7 +834,7 @@ def main() -> None:
         description=(
             "Export Inactivity Report Excel from warehouse marts. "
             "Omit category/programme for select-all. "
-            "Inactivity period: 7, 14, 30, or never."
+            "Inactivity period: 7, 14, 30, never, or a positive day count."
         )
     )
     parser.add_argument(
@@ -846,7 +854,7 @@ def main() -> None:
     parser.add_argument(
         "--inactivity-period",
         default="7",
-        help="Inactivity window: 7, 14, 30, or never (default: 7)",
+        help="Inactivity window: 7, 14, 30, never, or custom day count (default: 7)",
     )
     parser.add_argument(
         "--warehouse-schema",

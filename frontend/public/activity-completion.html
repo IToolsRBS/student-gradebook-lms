@@ -1,0 +1,264 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Activity Completion Report | Regent Business School</title>
+    <link rel="stylesheet" href="/styles.css" />
+  </head>
+  <body>
+    <div class="page-shell">
+      <header class="site-header">
+        <a class="brand" href="/" aria-label="Report Exports home">
+          <img src="/Logo.png" alt="" class="brand-logo" />
+          <span class="brand-text">
+            <span class="brand-name">Regent Business School</span>
+            <span class="brand-sub">Report Exports</span>
+          </span>
+        </a>
+        <nav class="site-nav" aria-label="Primary">
+          <a class="nav-pill" href="/">All Reports</a>
+          <a class="nav-pill" href="/gradebook">Gradebook</a>
+          <a class="nav-pill" href="/intake-summary">Intake Summary</a>
+          <a
+            class="nav-pill is-active"
+            href="/activity-completion"
+            aria-current="page"
+            >Activity Completion</a
+          >
+          <a class="nav-pill" href="/inactivity-report">Inactivity</a>
+          <a class="nav-pill" href="/missed-submission">Missed Submissions</a>
+          <a class="nav-pill" href="/late-submission">Late Submissions</a>
+        </nav>
+        <div class="top-bar-actions">
+          <div class="user-bar" id="userBar" hidden>
+            <span id="userName" class="user-name"></span>
+            <a href="/auth/logout" class="logout-link">Sign out</a>
+          </div>
+          <div class="time-now" id="timeNow">
+            <div class="time-date" id="timeDate">--</div>
+            <div class="time-clock" id="timeClock">--:--</div>
+          </div>
+        </div>
+      </header>
+
+      <main class="report-page">
+        <nav class="report-crumb" aria-label="Breadcrumb">
+          <a href="/" class="crumb-home" aria-label="All reports">
+            <svg
+              viewBox="0 0 24 24"
+              fill="none"
+              stroke="currentColor"
+              stroke-width="2"
+              stroke-linecap="round"
+              stroke-linejoin="round"
+              aria-hidden="true"
+            >
+              <path d="M3 10.5 12 3l9 7.5" />
+              <path d="M5 9.5V21h14V9.5" />
+            </svg>
+          </a>
+          <span class="crumb-sep" aria-hidden="true">/</span>
+          <a href="/">Reports</a>
+          <span class="crumb-sep" aria-hidden="true">/</span>
+          <span class="crumb-current">Activity Completion Report</span>
+        </nav>
+
+        <div class="report-intro">
+          <h1>Activity Completion Report</h1>
+          <p>
+            View and export student completion status for activities and
+            assessments.
+          </p>
+        </div>
+
+        <section class="card report-card">
+          <div class="filters">
+            <div class="filter-field">
+              <label for="categoryDropdownBtn">Category (Intake)</label>
+              <div class="custom-dropdown" data-dropdown="category">
+                <button
+                  id="categoryDropdownBtn"
+                  class="dropdown-trigger"
+                  type="button"
+                  aria-haspopup="listbox"
+                  aria-expanded="false"
+                >
+                  <span class="dropdown-value">Select category</span>
+                  <span class="dropdown-arrow" aria-hidden="true"></span>
+                </button>
+                <input
+                  class="dropdown-search"
+                  type="text"
+                  placeholder="Search category..."
+                  aria-label="Search category"
+                />
+                <ul
+                  class="dropdown-menu"
+                  role="listbox"
+                  aria-label="Category options"
+                ></ul>
+              </div>
+            </div>
+
+            <div class="filter-field">
+              <label for="programmeDropdownBtn">Programme(s)</label>
+              <div
+                class="custom-dropdown multi-select"
+                data-dropdown="programme"
+              >
+                <button
+                  id="programmeDropdownBtn"
+                  class="dropdown-trigger"
+                  type="button"
+                  aria-haspopup="listbox"
+                  aria-expanded="false"
+                  aria-multiselectable="true"
+                >
+                  <span class="dropdown-value">Select programme(s)</span>
+                  <span class="dropdown-arrow" aria-hidden="true"></span>
+                </button>
+                <input
+                  class="dropdown-search"
+                  type="text"
+                  placeholder="Search programme..."
+                  aria-label="Search programme"
+                />
+                <ul
+                  class="dropdown-menu"
+                  role="listbox"
+                  aria-label="Programme options"
+                  aria-multiselectable="true"
+                ></ul>
+              </div>
+            </div>
+
+            <div class="filter-field filter-field-full">
+              <label for="moduleDropdownBtn">Module(s)</label>
+              <div class="custom-dropdown multi-select" data-dropdown="module">
+                <button
+                  id="moduleDropdownBtn"
+                  class="dropdown-trigger"
+                  type="button"
+                  aria-haspopup="listbox"
+                  aria-expanded="false"
+                  aria-multiselectable="true"
+                >
+                  <span class="dropdown-value">Select module(s)</span>
+                  <span class="dropdown-arrow" aria-hidden="true"></span>
+                </button>
+                <input
+                  class="dropdown-search"
+                  type="text"
+                  placeholder="Search module..."
+                  aria-label="Search module"
+                />
+                <ul
+                  class="dropdown-menu"
+                  role="listbox"
+                  aria-label="Module options"
+                  aria-multiselectable="true"
+                ></ul>
+              </div>
+              <p class="filter-hint" id="moduleHint">
+                <span class="filter-hint-icon" aria-hidden="true">i</span>
+                Select one or more programmes first to view available modules.
+                Leave blank to include all modules.
+              </p>
+            </div>
+
+            <div class="filter-field filter-field-full">
+              <label for="assessmentTypeDropdownBtn">Assessment Type</label>
+              <div class="custom-dropdown" data-dropdown="assessmentType">
+                <button
+                  id="assessmentTypeDropdownBtn"
+                  class="dropdown-trigger"
+                  type="button"
+                  aria-haspopup="listbox"
+                  aria-expanded="false"
+                >
+                  <span class="dropdown-value"
+                    >All Assessment Types (Quiz, Assignment, Exam)</span
+                  >
+                  <span class="dropdown-arrow" aria-hidden="true"></span>
+                </button>
+                <input
+                  class="dropdown-search"
+                  type="text"
+                  placeholder="Search assessment type..."
+                  aria-label="Search assessment type"
+                />
+                <ul
+                  class="dropdown-menu"
+                  role="listbox"
+                  aria-label="Assessment type options"
+                ></ul>
+              </div>
+            </div>
+
+            <div class="filter-field filter-field-full">
+              <label for="statusDropdownBtn">Completion Status</label>
+              <div class="custom-dropdown" data-dropdown="status">
+                <button
+                  id="statusDropdownBtn"
+                  class="dropdown-trigger"
+                  type="button"
+                  aria-haspopup="listbox"
+                  aria-expanded="false"
+                >
+                  <span class="dropdown-value">All</span>
+                  <span class="dropdown-arrow" aria-hidden="true"></span>
+                </button>
+                <input
+                  class="dropdown-search"
+                  type="text"
+                  placeholder="Search status..."
+                  aria-label="Search completion status"
+                />
+                <ul
+                  class="dropdown-menu"
+                  role="listbox"
+                  aria-label="Completion status options"
+                ></ul>
+              </div>
+            </div>
+          </div>
+
+          <button id="exportBtn" class="export-btn export-btn-icon" type="button">
+            <span>Export Activity Completion Report</span>
+            <svg
+              class="export-btn-glyph"
+              viewBox="0 0 24 24"
+              fill="none"
+              stroke="currentColor"
+              stroke-width="2"
+              stroke-linecap="round"
+              stroke-linejoin="round"
+              aria-hidden="true"
+            >
+              <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" />
+              <polyline points="7 10 12 15 17 10" />
+              <line x1="12" y1="15" x2="12" y2="3" />
+            </svg>
+          </button>
+          <div id="exportStatus" class="export-status" aria-live="polite"></div>
+          <div id="exportProgress" class="export-progress" aria-live="polite">
+            <div class="export-progress-head">
+              <span
+                id="progressSpinner"
+                class="progress-spinner"
+                aria-hidden="true"
+              ></span>
+              <span id="progressStageText">Waiting to start...</span>
+              <span id="progressElapsed" class="progress-elapsed">00:00</span>
+            </div>
+            <div class="progress-track">
+              <div id="progressFill" class="progress-fill"></div>
+            </div>
+          </div>
+        </section>
+      </main>
+    </div>
+    <script type="module" src="/activity-completion.js"></script>
+  </body>
+</html>

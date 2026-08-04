@@ -3,89 +3,171 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>Gradebook Frontend</title>
+    <title>Report Exports | Regent Business School</title>
     <link rel="stylesheet" href="/styles.css" />
   </head>
-  <body>
-    <div class="user-bar" id="userBar" hidden>
-      <span id="userName" class="user-name"></span>
-      <a href="/auth/logout" class="logout-link">Sign out</a>
+  <body class="landing-page">
+    <div class="page-shell">
+      <header class="site-header">
+        <a class="brand" href="/" aria-label="Report Exports home">
+          <img src="/Logo.png" alt="" class="brand-logo" />
+          <span class="brand-text">
+            <span class="brand-name">Regent Business School</span>
+            <span class="brand-sub">Report Exports</span>
+          </span>
+        </a>
+        <nav class="site-nav" aria-label="Primary">
+          <a class="nav-pill is-active" href="/" aria-current="page">All Reports</a>
+          <a class="nav-pill" href="/gradebook">Gradebook</a>
+          <a class="nav-pill" href="/intake-summary">Intake Summary</a>
+          <a class="nav-pill" href="/activity-completion">Activity Completion</a>
+          <a class="nav-pill" href="/inactivity-report">Inactivity</a>
+          <a class="nav-pill" href="/missed-submission">Missed Submissions</a>
+          <a class="nav-pill" href="/late-submission">Late Submissions</a>
+        </nav>
+        <div class="top-bar-actions">
+          <div class="user-bar" id="userBar" hidden>
+            <span id="userName" class="user-name"></span>
+            <a href="/auth/logout" class="logout-link">Sign out</a>
+          </div>
+          <div class="time-now" id="timeNow">
+            <div class="time-date" id="timeDate">--</div>
+            <div class="time-clock" id="timeClock">--:--</div>
+          </div>
+        </div>
+      </header>
+
+      <main class="landing">
+        <div class="landing-intro">
+          <h1>Welcome to LMS Gradebook</h1>
+          <p>Select a report below to generate and download Excel exports.</p>
+        </div>
+
+        <div class="report-board" aria-label="Available reports">
+          <div class="board-pluses" aria-hidden="true">
+            <span class="board-plus" style="top:0;left:0"></span>
+            <span class="board-plus" style="top:0;left:42%"></span>
+            <span class="board-plus" style="top:0;left:71%"></span>
+            <span class="board-plus" style="top:0;left:100%"></span>
+            <span class="board-plus" style="top:66%;left:0"></span>
+            <span class="board-plus" style="top:66%;left:42%"></span>
+            <span class="board-plus" style="top:66%;left:71%"></span>
+            <span class="board-plus" style="top:66%;left:100%"></span>
+            <span class="board-plus" style="top:100%;left:0"></span>
+            <span class="board-plus" style="top:100%;left:42%"></span>
+            <span class="board-plus" style="top:100%;left:71%"></span>
+            <span class="board-plus" style="top:100%;left:100%"></span>
+            <span class="board-plus" style="top:33%;left:42%"></span>
+            <span class="board-plus" style="top:33%;left:71%"></span>
+            <span class="board-plus" style="top:33%;left:100%"></span>
+          </div>
+
+          <div class="report-board-grid">
+            <a class="report-cell report-cell-featured" href="/gradebook">
+              <div class="report-meta">
+                <span class="report-icon" aria-hidden="true">
+                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                    <path d="M4 19.5A2.5 2.5 0 0 1 6.5 17H20" />
+                    <path d="M6.5 2H20v20H6.5A2.5 2.5 0 0 1 4 19.5v-15A2.5 2.5 0 0 1 6.5 2z" />
+                    <path d="M8 7h8M8 11h6" />
+                  </svg>
+                </span>
+                <span class="report-tag">Available</span>
+              </div>
+              <h2>Full Gradebook Export</h2>
+              <p>
+                Export student performance, assessments, and scores for a selected
+                category and programme.
+              </p>
+              <span class="report-cta">Open report</span>
+            </a>
+
+            <a class="report-cell" href="/intake-summary">
+              <div class="report-meta">
+                <span class="report-icon" aria-hidden="true">
+                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                    <path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2" />
+                    <circle cx="9" cy="7" r="4" />
+                    <path d="M23 21v-2a4 4 0 0 0-3-3.87" />
+                    <path d="M16 3.13a4 4 0 0 1 0 7.75" />
+                  </svg>
+                </span>
+                <span class="report-tag">Available</span>
+              </div>
+              <h2>Intake Summary Report</h2>
+              <p>Programme-level overview for a selected intake, including enrolment and performance indicators.</p>
+              <span class="report-cta">Open report</span>
+            </a>
+
+            <a class="report-cell" href="/activity-completion">
+              <div class="report-meta">
+                <span class="report-icon" aria-hidden="true">
+                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                    <path d="M9 11l3 3L22 4" />
+                    <path d="M21 12v7a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11" />
+                  </svg>
+                </span>
+                <span class="report-tag">Available</span>
+              </div>
+              <h2>Activity Completion Report</h2>
+              <p>View and export student completion status for activities and assessments within a module.</p>
+              <span class="report-cta">Open report</span>
+            </a>
+
+            <a class="report-cell" href="/inactivity-report">
+              <div class="report-meta">
+                <span class="report-icon" aria-hidden="true">
+                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                    <path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2" />
+                    <circle cx="12" cy="7" r="4" />
+                    <line x1="18" y1="8" x2="23" y2="13" />
+                    <line x1="23" y1="8" x2="18" y2="13" />
+                  </svg>
+                </span>
+                <span class="report-tag">Available</span>
+              </div>
+              <h2>Inactivity Report</h2>
+              <p>Identify students who have not accessed Moodle or selected modules within a given period.</p>
+              <span class="report-cta">Open report</span>
+            </a>
+
+            <a class="report-cell" href="/missed-submission">
+              <div class="report-meta">
+                <span class="report-icon" aria-hidden="true">
+                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                    <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" />
+                    <polyline points="14 2 14 8 20 8" />
+                    <line x1="9" y1="15" x2="15" y2="15" />
+                  </svg>
+                </span>
+                <span class="report-tag">Available</span>
+              </div>
+              <h2>Missed Submission Report</h2>
+              <p>Export assessments that were not submitted by students before the due date.</p>
+              <span class="report-cta">Open report</span>
+            </a>
+
+            <a class="report-cell report-cell-wide" href="/late-submission">
+              <div class="report-meta">
+                <span class="report-icon" aria-hidden="true">
+                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                    <circle cx="12" cy="12" r="10" />
+                    <polyline points="12 6 12 12 16 14" />
+                  </svg>
+                </span>
+                <span class="report-tag">Available</span>
+              </div>
+              <div class="report-wide-body">
+                <h2>Late Submission Report</h2>
+                <p>Export assessments submitted after the due date for follow-up and academic review.</p>
+              </div>
+              <span class="report-cta">Open report</span>
+            </a>
+          </div>
+        </div>
+      </main>
     </div>
-    <div class="time-now" id="timeNow">
-      <div class="time-date" id="timeDate">--</div>
-      <div class="time-clock" id="timeClock">--:--</div>
-    </div>
-    <main class="container">
-      <section class="card">
-        <div class="card-header">
-          <img src="/Logo.png" alt="Logo" class="app-logo" />
-          <h1>Export Gradebooks</h1>
-        </div>
 
-        <div class="filters">
-          <label for="categoryDropdownBtn">Category</label>
-          <div class="custom-dropdown" data-dropdown="category">
-            <button
-              id="categoryDropdownBtn"
-              class="dropdown-trigger"
-              type="button"
-              aria-haspopup="listbox"
-              aria-expanded="false"
-            >
-              <span class="dropdown-value">Select category</span>
-              <span class="dropdown-arrow" aria-hidden="true"></span>
-            </button>
-            <input
-              class="dropdown-search"
-              type="text"
-              placeholder="Search category..."
-              aria-label="Search category"
-            />
-            <ul class="dropdown-menu" role="listbox" aria-label="Category options"></ul>
-          </div>
-
-          <label for="programmeDropdownBtn">Programme(s)</label>
-          <div class="custom-dropdown multi-select" data-dropdown="programme">
-            <button
-              id="programmeDropdownBtn"
-              class="dropdown-trigger"
-              type="button"
-              aria-haspopup="listbox"
-              aria-expanded="false"
-              aria-multiselectable="true"
-            >
-              <span class="dropdown-value">Select programme(s)</span>
-              <span class="dropdown-arrow" aria-hidden="true"></span>
-            </button>
-            <input
-              class="dropdown-search"
-              type="text"
-              placeholder="Search programme..."
-              aria-label="Search programme"
-            />
-            <ul
-              class="dropdown-menu"
-              role="listbox"
-              aria-label="Programme options"
-              aria-multiselectable="true"
-            ></ul>
-          </div>
-        </div>
-
-        <button id="exportBtn" class="export-btn" type="button">Export to Excel</button>
-        <div id="exportStatus" class="export-status" aria-live="polite"></div>
-        <div id="exportProgress" class="export-progress" aria-live="polite">
-          <div class="export-progress-head">
-            <span id="progressSpinner" class="progress-spinner" aria-hidden="true"></span>
-            <span id="progressStageText">Waiting to start...</span>
-            <span id="progressElapsed" class="progress-elapsed">00:00</span>
-          </div>
-          <div class="progress-track">
-            <div id="progressFill" class="progress-fill"></div>
-          </div>
-        </div>
-      </section>
-    </main>
-    <script type="module" src="/app.js"></script>
+    <script type="module" src="/landing.js"></script>
   </body>
 </html>

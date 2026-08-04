@@ -82,6 +82,8 @@ def write_late_submissions_summary(
     assessment_types: Sequence[str],
     assessments: Sequence[str],
     statuses: Sequence[str],
+    due_from: str | None = None,
+    due_to: str | None = None,
 ) -> int:
     write_headers(ws, SUMMARY_HEADERS)
     widths = [max(12, min(len(h) + 2, MAX_COLUMN_WIDTH)) for h in SUMMARY_HEADERS]
@@ -141,6 +143,8 @@ def write_late_submissions_summary(
         assessment_types=assessment_types,
         assessments=assessments,
         statuses=statuses,
+        due_from=due_from,
+        due_to=due_to,
         select_sql=", ".join(select_parts),
         group_by_sql=", ".join(group_parts),
         order_columns=["programme", "course_shortname", "assessment_name"],
@@ -215,6 +219,8 @@ def write_late_submission_details(
     assessment_types: Sequence[str],
     assessments: Sequence[str],
     statuses: Sequence[str],
+    due_from: str | None = None,
+    due_to: str | None = None,
 ) -> int:
     write_headers(ws, DETAIL_HEADERS)
     widths = [max(12, min(len(h) + 2, MAX_COLUMN_WIDTH)) for h in DETAIL_HEADERS]
@@ -230,6 +236,8 @@ def write_late_submission_details(
         assessment_types=assessment_types,
         assessments=assessments,
         statuses=statuses,
+        due_from=due_from,
+        due_to=due_to,
         order_columns=[
             "category_name",
             "programme",
@@ -287,6 +295,8 @@ def build_workbook(
     assessment_types: Sequence[str],
     assessments: Sequence[str],
     statuses: Sequence[str],
+    due_from: str | None = None,
+    due_to: str | None = None,
 ) -> Path:
     wb = Workbook(write_only=True)
 
@@ -301,6 +311,8 @@ def build_workbook(
         assessment_types=assessment_types,
         assessments=assessments,
         statuses=statuses,
+        due_from=due_from,
+        due_to=due_to,
     )
     gc.collect()
 
@@ -315,6 +327,8 @@ def build_workbook(
         assessment_types=assessment_types,
         assessments=assessments,
         statuses=statuses,
+        due_from=due_from,
+        due_to=due_to,
     )
     gc.collect()
 
@@ -387,6 +401,16 @@ def main() -> None:
         ),
     )
     parser.add_argument(
+        "--due-from",
+        default=None,
+        help="Optional due date lower bound (YYYY-MM-DD)",
+    )
+    parser.add_argument(
+        "--due-to",
+        default=None,
+        help="Optional due date upper bound (YYYY-MM-DD)",
+    )
+    parser.add_argument(
         "--warehouse-schema",
         default=None,
         help="Schema for gradebook marts (default: moodle_processed)",
@@ -414,6 +438,8 @@ def main() -> None:
         statuses = _normalize_statuses(args.statuses)
     else:
         statuses = list(DEFAULT_LATE_STATUSES)
+    due_from = (args.due_from or "").strip() or None
+    due_to = (args.due_to or "").strip() or None
 
     schema = args.warehouse_schema or gradebook_schema() or DEFAULT_SCHEMA
     output_dir = Path(args.output_dir)
@@ -431,6 +457,8 @@ def main() -> None:
             assessment_types=assessment_types,
             assessments=assessments,
             statuses=statuses,
+            due_from=due_from,
+            due_to=due_to,
         )
     except Exception:
         import traceback

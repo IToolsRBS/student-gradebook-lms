@@ -1,0 +1,190 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Intake Summary Report | Regent Business School</title>
+    <link rel="stylesheet" href="/styles.css" />
+  </head>
+  <body>
+    <div class="page-shell">
+      <header class="site-header">
+        <a class="brand" href="/" aria-label="Report Exports home">
+          <img src="/Logo.png" alt="" class="brand-logo" />
+          <span class="brand-text">
+            <span class="brand-name">Regent Business School</span>
+            <span class="brand-sub">Report Exports</span>
+          </span>
+        </a>
+        <nav class="site-nav" aria-label="Primary">
+          <a class="nav-pill" href="/">All Reports</a>
+          <a class="nav-pill" href="/gradebook">Gradebook</a>
+          <a
+            class="nav-pill is-active"
+            href="/intake-summary"
+            aria-current="page"
+            >Intake Summary</a
+          >
+          <a class="nav-pill" href="/activity-completion">Activity Completion</a>
+          <a class="nav-pill" href="/inactivity-report">Inactivity</a>
+          <a class="nav-pill" href="/missed-submission">Missed Submissions</a>
+          <a class="nav-pill" href="/late-submission">Late Submissions</a>
+        </nav>
+        <div class="top-bar-actions">
+          <div class="user-bar" id="userBar" hidden>
+            <span id="userName" class="user-name"></span>
+            <a href="/auth/logout" class="logout-link">Sign out</a>
+          </div>
+          <div class="time-now" id="timeNow">
+            <div class="time-date" id="timeDate">--</div>
+            <div class="time-clock" id="timeClock">--:--</div>
+          </div>
+        </div>
+      </header>
+
+      <main class="report-page">
+        <nav class="report-crumb" aria-label="Breadcrumb">
+          <a href="/" class="crumb-home" aria-label="All reports">
+            <svg
+              viewBox="0 0 24 24"
+              fill="none"
+              stroke="currentColor"
+              stroke-width="2"
+              stroke-linecap="round"
+              stroke-linejoin="round"
+              aria-hidden="true"
+            >
+              <path d="M3 10.5 12 3l9 7.5" />
+              <path d="M5 9.5V21h14V9.5" />
+            </svg>
+          </a>
+          <span class="crumb-sep" aria-hidden="true">/</span>
+          <a href="/">Reports</a>
+          <span class="crumb-sep" aria-hidden="true">/</span>
+          <span class="crumb-current">Intake Summary Report</span>
+        </nav>
+
+        <div class="report-intro">
+          <h1>Intake Summary Report</h1>
+          <p>Generate a programme-level overview for the selected intake.</p>
+        </div>
+
+        <section class="card report-card">
+          <div class="filters filters-single">
+            <div class="filter-field">
+              <label for="categoryDropdownBtn">Category (Intake)</label>
+              <div class="custom-dropdown" data-dropdown="category">
+                <button
+                  id="categoryDropdownBtn"
+                  class="dropdown-trigger"
+                  type="button"
+                  aria-haspopup="listbox"
+                  aria-expanded="false"
+                >
+                  <span class="dropdown-value">Select category</span>
+                  <span class="dropdown-arrow" aria-hidden="true"></span>
+                </button>
+                <input
+                  class="dropdown-search"
+                  type="text"
+                  placeholder="Search category..."
+                  aria-label="Search category"
+                />
+                <ul
+                  class="dropdown-menu"
+                  role="listbox"
+                  aria-label="Category options"
+                ></ul>
+              </div>
+            </div>
+          </div>
+
+          <button id="exportBtn" class="export-btn export-btn-icon" type="button">
+            <span>Export Intake Summary Report</span>
+            <svg
+              class="export-btn-glyph"
+              viewBox="0 0 24 24"
+              fill="none"
+              stroke="currentColor"
+              stroke-width="2"
+              stroke-linecap="round"
+              stroke-linejoin="round"
+              aria-hidden="true"
+            >
+              <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" />
+              <polyline points="7 10 12 15 17 10" />
+              <line x1="12" y1="15" x2="12" y2="3" />
+            </svg>
+          </button>
+          <div id="exportStatus" class="export-status" aria-live="polite"></div>
+          <div id="exportProgress" class="export-progress" aria-live="polite">
+            <div class="export-progress-head">
+              <span
+                id="progressSpinner"
+                class="progress-spinner"
+                aria-hidden="true"
+              ></span>
+              <span id="progressStageText">Waiting to start...</span>
+              <span id="progressElapsed" class="progress-elapsed">00:00</span>
+            </div>
+            <div class="progress-track">
+              <div id="progressFill" class="progress-fill"></div>
+            </div>
+          </div>
+        </section>
+
+        <section class="card report-preview-card" aria-labelledby="previewHeading">
+          <h2 id="previewHeading">
+            Preview: Report Structure (One row per programme)
+          </h2>
+          <div class="preview-table-wrap">
+            <table class="preview-table">
+              <thead>
+                <tr>
+                  <th scope="col">Programme</th>
+                  <th scope="col">Active Modules</th>
+                  <th scope="col">Students</th>
+                  <th scope="col">Suspended Students</th>
+                  <th scope="col">Not Accessed Portal</th>
+                  <th scope="col">Zero Submissions</th>
+                </tr>
+              </thead>
+              <tbody>
+                <tr>
+                  <td>MBA</td>
+                  <td>12</td>
+                  <td>86</td>
+                  <td>5</td>
+                  <td>4</td>
+                  <td>12</td>
+                </tr>
+                <tr>
+                  <td>BBA</td>
+                  <td>10</td>
+                  <td>73</td>
+                  <td>3</td>
+                  <td>6</td>
+                  <td>9</td>
+                </tr>
+                <tr>
+                  <td>BCom</td>
+                  <td>8</td>
+                  <td>61</td>
+                  <td>2</td>
+                  <td>3</td>
+                  <td>7</td>
+                </tr>
+              </tbody>
+            </table>
+          </div>
+          <p class="preview-note">
+            <span class="filter-hint-icon" aria-hidden="true">i</span>
+            Numbers shown are sample data for preview purposes. MUST BE CHANGED TO CHANGED TO USE THE ACTUAL DATA FROM WAREHOUSE THE TABLE IS HARD CODED
+
+          </p>
+        </section>
+      </main>
+    </div>
+    <script type="module" src="/intake-summary.js"></script>
+  </body>
+</html>

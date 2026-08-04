@@ -1,0 +1,153 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Full Gradebook Export | Regent Business School</title>
+    <link rel="stylesheet" href="/styles.css" />
+  </head>
+  <body>
+    <div class="page-shell">
+      <header class="site-header">
+        <a class="brand" href="/" aria-label="Report Exports home">
+          <img src="/Logo.png" alt="" class="brand-logo" />
+          <span class="brand-text">
+            <span class="brand-name">Regent Business School</span>
+            <span class="brand-sub">Report Exports</span>
+          </span>
+        </a>
+        <nav class="site-nav" aria-label="Primary">
+          <a class="nav-pill" href="/">All Reports</a>
+          <a class="nav-pill is-active" href="/gradebook" aria-current="page">Gradebook</a>
+          <a class="nav-pill" href="/intake-summary">Intake Summary</a>
+          <a class="nav-pill" href="/activity-completion">Activity Completion</a>
+          <a class="nav-pill" href="/inactivity-report">Inactivity</a>
+          <a class="nav-pill" href="/missed-submission">Missed Submissions</a>
+          <a class="nav-pill" href="/late-submission">Late Submissions</a>
+        </nav>
+        <div class="top-bar-actions">
+          <div class="user-bar" id="userBar" hidden>
+            <span id="userName" class="user-name"></span>
+            <a href="/auth/logout" class="logout-link">Sign out</a>
+          </div>
+          <div class="time-now" id="timeNow">
+            <div class="time-date" id="timeDate">--</div>
+            <div class="time-clock" id="timeClock">--:--</div>
+          </div>
+        </div>
+      </header>
+
+      <main class="container">
+        <div class="gradebook-panel">
+          <div class="gradebook-intro">
+            <h1>Full Gradebook Export</h1>
+            <p>Export the complete gradebook for selected programmes and modules.</p>
+          </div>
+
+          <section class="card">
+            <div class="filters">
+              <div class="filter-field">
+                <label for="categoryDropdownBtn">Category (Intake)</label>
+                <div class="custom-dropdown" data-dropdown="category">
+                  <button
+                    id="categoryDropdownBtn"
+                    class="dropdown-trigger"
+                    type="button"
+                    aria-haspopup="listbox"
+                    aria-expanded="false"
+                  >
+                    <span class="dropdown-value">Select category</span>
+                    <span class="dropdown-arrow" aria-hidden="true"></span>
+                  </button>
+                  <input
+                    class="dropdown-search"
+                    type="text"
+                    placeholder="Search category..."
+                    aria-label="Search category"
+                  />
+                  <ul class="dropdown-menu" role="listbox" aria-label="Category options"></ul>
+                </div>
+              </div>
+
+              <div class="filter-field">
+                <label for="programmeDropdownBtn">Programme(s)</label>
+                <div class="custom-dropdown multi-select" data-dropdown="programme">
+                  <button
+                    id="programmeDropdownBtn"
+                    class="dropdown-trigger"
+                    type="button"
+                    aria-haspopup="listbox"
+                    aria-expanded="false"
+                    aria-multiselectable="true"
+                  >
+                    <span class="dropdown-value">Select programme(s)</span>
+                    <span class="dropdown-arrow" aria-hidden="true"></span>
+                  </button>
+                  <input
+                    class="dropdown-search"
+                    type="text"
+                    placeholder="Search programme..."
+                    aria-label="Search programme"
+                  />
+                  <ul
+                    class="dropdown-menu"
+                    role="listbox"
+                    aria-label="Programme options"
+                    aria-multiselectable="true"
+                  ></ul>
+                </div>
+              </div>
+
+              <div class="filter-field filter-field-modules">
+                <label for="moduleDropdownBtn">Module(s)</label>
+                <div class="custom-dropdown multi-select" data-dropdown="module">
+                  <button
+                    id="moduleDropdownBtn"
+                    class="dropdown-trigger"
+                    type="button"
+                    aria-haspopup="listbox"
+                    aria-expanded="false"
+                    aria-multiselectable="true"
+                  >
+                    <span class="dropdown-value">Select module(s)</span>
+                    <span class="dropdown-arrow" aria-hidden="true"></span>
+                  </button>
+                  <input
+                    class="dropdown-search"
+                    type="text"
+                    placeholder="Search module..."
+                    aria-label="Search module"
+                  />
+                  <ul
+                    class="dropdown-menu"
+                    role="listbox"
+                    aria-label="Module options"
+                    aria-multiselectable="true"
+                  ></ul>
+                </div>
+                <p class="filter-hint" id="moduleHint">
+                  <span class="filter-hint-icon" aria-hidden="true">i</span>
+                  Select one or more programmes first to view available modules.
+                </p>
+              </div>
+            </div>
+
+            <button id="exportBtn" class="export-btn" type="button">Export Full Gradebook</button>
+            <div id="exportStatus" class="export-status" aria-live="polite"></div>
+            <div id="exportProgress" class="export-progress" aria-live="polite">
+              <div class="export-progress-head">
+                <span id="progressSpinner" class="progress-spinner" aria-hidden="true"></span>
+                <span id="progressStageText">Waiting to start...</span>
+                <span id="progressElapsed" class="progress-elapsed">00:00</span>
+              </div>
+              <div class="progress-track">
+                <div id="progressFill" class="progress-fill"></div>
+              </div>
+            </div>
+          </section>
+        </div>
+      </main>
+    </div>
+    <script type="module" src="/app.js"></script>
+  </body>
+</html>
