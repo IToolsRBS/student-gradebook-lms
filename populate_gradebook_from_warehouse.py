@@ -337,18 +337,56 @@ _TABLE_STYLE = TableStyleInfo(
     showRowStripes=False,
     showColumnStripes=False,
 )
+# Excel table column names cannot contain these characters.
+_TABLE_HEADER_BAD_CHARS = str.maketrans(
+    {
+        "\\": "_",
+        "/": "_",
+        "?": "_",
+        "*": "_",
+        "[": "_",
+        "]": "_",
+    }
+)
 
 
-def write_headers(ws: Worksheet, headers: Sequence[str]) -> None:
-    """Append styled header row (write-only safe)."""
+def _excel_table_headers(headers: Sequence[str]) -> list[str]:
+    """
+    Return header labels that are valid unique Excel table column names.
+
+    Must be applied both when writing the header row and when building the
+    Table definition — Excel removes tables when these do not match exactly.
+    """
+    cleaned: list[str] = []
+    seen: set[str] = set()
+    for idx, raw in enumerate(headers):
+        name = str(raw or "").strip() or f"Column{idx + 1}"
+        name = name.translate(_TABLE_HEADER_BAD_CHARS)
+        # Excel treats table column names as case-insensitive uniques.
+        key = name.casefold()
+        if key in seen:
+            suffix = 2
+            while f"{name}_{suffix}".casefold() in seen:
+                suffix += 1
+            name = f"{name}_{suffix}"
+            key = name.casefold()
+        seen.add(key)
+        cleaned.append(name)
+    return cleaned
+
+
+def write_headers(ws: Worksheet, headers: Sequence[str]) -> list[str]:
+    """Append styled header row (write-only safe). Returns Excel-safe names used."""
+    safe_headers = _excel_table_headers(headers)
     cells: list[Any] = []
-    for header in headers:
+    for header in safe_headers:
         cell = WriteOnlyCell(ws, value=header)
         cell.fill = _HEADER_FILL
         cell.font = _HEADER_FONT
         cell.alignment = _HEADER_ALIGN
         cells.append(cell)
     ws.append(cells)
+    return safe_headers
 
 
 def _unique_table_name(ws: Worksheet) -> str:
@@ -383,10 +421,14 @@ def finish_sheet(
     col_widths: Sequence[int] | None = None,
 ) -> None:
     """
-    Freeze header, format as Excel Table (White / Table Style Light 1),
-    and autofit column widths from sampled content.
+    Freeze header, format as Excel Table (White / Table Style Light 1) when
+    there is data, and autofit column widths.
+
+    Header-only sheets skip Table creation — Excel file repair discards
+    tables whose ref is only the header row.
     """
-    column_count = len(headers)
+    safe_headers = _excel_table_headers(headers)
+    column_count = len(safe_headers)
     if column_count < 1:
         return
     ws.freeze_panes = "A2"
@@ -394,17 +436,22 @@ def finish_sheet(
     last_row = max(1, data_row_count + 1)
     ref = f"A1:{last_col}{last_row}"
 
-    table = Table(displayName=_unique_table_name(ws), ref=ref)
-    table.tableStyleInfo = _TABLE_STYLE
-    # write-only sheets need explicit table column names matching the header row
-    table._initialise_columns()
-    for column, header in zip(table.tableColumns, headers):
-        column.name = str(header)
-    ws.add_table(table)
+    if data_row_count >= 1:
+        table = Table(displayName=_unique_table_name(ws), ref=ref)
+        table.totalsRowShown = False
+        table.tableStyleInfo = _TABLE_STYLE
+        # write-only sheets need explicit table column names matching the header row
+        table._initialise_columns()
+        for column, header in zip(table.tableColumns, safe_headers):
+            column.name = header
+        ws.add_table(table)
+    else:
+        # Filters without a Table — valid for empty sheets Excel would otherwise repair.
+        ws.auto_filter.ref = ref
 
     widths = list(col_widths) if col_widths else []
     for idx in range(1, column_count + 1):
-        header_width = min(len(str(headers[idx - 1])) + 2, MAX_COLUMN_WIDTH)
+        header_width = min(len(safe_headers[idx - 1]) + 2, MAX_COLUMN_WIDTH)
         sampled = (
             widths[idx - 1]
             if idx - 1 < len(widths)
