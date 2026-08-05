@@ -328,27 +328,26 @@ def append_data_row(ws: Worksheet, values: Sequence[Any]) -> None:
     """
     Stream one data row immediately (write-only safe).
 
-    Avoids buffering the full sheet in memory — critical for large gradebook
-    exports on constrained hosts (Render). Column widths are set heuristically
-    in write_headers before the first append.
+    Every cell gets a thin border so the sheet reads as a proper table.
+    Rows are not buffered — critical for large gradebook exports on Render.
+    Column widths are set heuristically in write_headers before the first append.
     """
     row_idx = int(getattr(ws, "_export_data_row", 0) or 0)
     setattr(ws, "_export_data_row", row_idx + 1)
     wrap_cols: set[int] = getattr(ws, "_export_wrap_cols", set()) or set()
 
-    # Prefer raw values; only allocate WriteOnlyCell when format/wrap is needed.
     cells: list[Any] = []
     for col_idx, value in enumerate(values):
-        number_format = _excel_number_format(value)
-        wrap = col_idx in wrap_cols
-        if number_format is None and not wrap:
-            cells.append(value)
-            continue
         cell = WriteOnlyCell(ws, value=value)
+        cell.font = _DATA_FONT
+        cell.border = _THIN_BORDER
+        number_format = _excel_number_format(value)
         if number_format is not None:
             cell.number_format = number_format
-        if wrap:
+        if col_idx in wrap_cols:
             cell.alignment = _WRAP_ALIGN
+        else:
+            cell.alignment = _DATA_ALIGN
         cells.append(cell)
     ws.append(cells)
 
@@ -365,9 +364,10 @@ _HEADER_FONT = Font(
 )
 _HEADER_ALIGN = Alignment(horizontal="center", vertical="center", wrap_text=True)
 _DATA_FONT = Font(name=_FONT_NAME, size=_FONT_SIZE, color="000000")
+_DATA_ALIGN = Alignment(horizontal="left", vertical="center", wrap_text=False)
 _WRAP_ALIGN = Alignment(horizontal="left", vertical="top", wrap_text=True)
 _SUSPENDED_FILL = PatternFill(fill_type="solid", fgColor=_SUSPENDED_GREY)
-# Row striping comes from the Excel table style (no per-cell fills = much faster).
+# Row striping from Excel table style; cell outlines come from per-cell borders.
 _TABLE_STYLE = TableStyleInfo(
     name="TableStyleLight1",
     showFirstColumn=False,
