@@ -696,9 +696,11 @@ exportBtn?.addEventListener("click", async () => {
     const downloadUrl = URL.createObjectURL(blob);
     const a = document.createElement("a");
     a.href = downloadUrl;
+    const periodSlug =
+      inactivityPeriod === "never" ? "never" : `${inactivityPeriod}d`;
     a.download =
       latestJob?.fileName ||
-      `inactivity_report_${inactivityPeriod}d_${categoryName.replace(/\s+/g, "_")}_${Date.now()}.xlsx`;
+      `inactivity_report_${periodSlug}_${categoryName.replace(/\s+/g, "_")}_${Date.now()}.xlsx`;
     document.body.appendChild(a);
     a.click();
     a.remove();
