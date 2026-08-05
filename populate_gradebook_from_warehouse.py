@@ -10,6 +10,7 @@ from __future__ import annotations
 import argparse
 import gc
 import math
+import warnings
 from datetime import date, datetime
 from decimal import Decimal
 from pathlib import Path
@@ -639,7 +640,14 @@ def finish_sheet(
         table._initialise_columns()
         for column, header in zip(table.tableColumns, safe_headers):
             column.name = header
-        ws.add_table(table)
+        # openpyxl always warns on write-only add_table, even after manual columns.
+        with warnings.catch_warnings():
+            warnings.filterwarnings(
+                "ignore",
+                message="In write-only mode you must add table columns manually",
+                category=UserWarning,
+            )
+            ws.add_table(table)
     else:
         # Filters without a Table — valid for empty sheets Excel would otherwise repair.
         ws.auto_filter.ref = ref
