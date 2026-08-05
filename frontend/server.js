@@ -266,24 +266,55 @@ function updateJob(jobId, patch) {
   exportJobs.set(jobId, { ...current, ...patch, updatedAt: Date.now() });
 }
 
-async function readFileWithRetry(filePath, maxAttempts = 6, baseDelayMs = 400) {
+async function waitForReadableFile(filePath, maxAttempts = 6, baseDelayMs = 400) {
   let lastError = null;
   for (let attempt = 1; attempt <= maxAttempts; attempt++) {
     try {
-      return await fs.promises.readFile(filePath);
+      await fs.promises.access(filePath, fs.constants.R_OK);
+      const stat = await fs.promises.stat(filePath);
+      if (stat.size > 0) return stat;
+      lastError = new Error("Export file is empty");
     } catch (error) {
       lastError = error;
       const retryable =
         error?.code === "EBUSY" ||
         error?.code === "EPERM" ||
-        error?.code === "EACCES";
+        error?.code === "EACCES" ||
+        error?.code === "ENOENT";
       if (!retryable || attempt === maxAttempts) break;
-      await new Promise((resolve) =>
-        setTimeout(resolve, baseDelayMs * attempt)
-      );
     }
+    await new Promise((resolve) =>
+      setTimeout(resolve, baseDelayMs * attempt)
+    );
   }
   throw lastError;
+}
+
+function sendExportDownload(res, job) {
+  const fileName = job.fileName || path.basename(job.filePath);
+  res.setHeader("x-export-ms", String(job.timingsMs?.excel || ""));
+  res.setHeader("x-total-ms", String(job.timingsMs?.total || ""));
+  res.setHeader(
+    "Content-Type",
+    "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+  );
+  res.setHeader(
+    "Content-Disposition",
+    `attachment; filename="${String(fileName).replace(/"/g, "")}"`
+  );
+  // Stream to disk→client without loading the whole workbook into Node memory.
+  const stream = fs.createReadStream(job.filePath);
+  stream.on("error", (error) => {
+    console.error(`[export-download] stream error`, error);
+    if (!res.headersSent) {
+      res.status(503).json({
+        error: `Could not read export file: ${error?.message || error}`
+      });
+    } else {
+      res.destroy(error);
+    }
+  });
+  stream.pipe(res);
 }
 
 app.use(express.json());
@@ -1511,6 +1542,7 @@ app.get("/api/export-excel/jobs/:jobId", (req, res) => {
   if (!job) {
     return res.status(404).json({ error: "Job not found" });
   }
+  res.setHeader("Cache-Control", "no-store");
   res.json(publicJobPayload(job));
 });
 
@@ -1523,20 +1555,9 @@ app.get("/api/export-excel/jobs/:jobId/download", async (req, res) => {
   if (job.status !== "done" || !job.filePath || !fs.existsSync(job.filePath)) {
     return res.status(409).json({ error: "Export not ready for download" });
   }
-  const fileName = job.fileName || path.basename(job.filePath);
   try {
-    const data = await readFileWithRetry(job.filePath);
-    res.setHeader("x-export-ms", String(job.timingsMs?.excel || ""));
-    res.setHeader("x-total-ms", String(job.timingsMs?.total || ""));
-    res.setHeader(
-      "Content-Type",
-      "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
-    );
-    res.setHeader(
-      "Content-Disposition",
-      `attachment; filename="${fileName.replace(/"/g, "")}"`
-    );
-    res.send(data);
+    await waitForReadableFile(job.filePath);
+    sendExportDownload(res, job);
   } catch (error) {
     console.error(`[export-download:${jobId}]`, error);
     res.status(503).json({
