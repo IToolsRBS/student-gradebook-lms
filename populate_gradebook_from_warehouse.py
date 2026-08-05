@@ -18,7 +18,8 @@ from typing import Any, Iterator, Sequence
 import duckdb
 from openpyxl import Workbook
 from openpyxl.cell import WriteOnlyCell
-from openpyxl.styles import Alignment, Font, PatternFill
+from openpyxl.formatting.rule import FormulaRule
+from openpyxl.styles import Alignment, Border, Font, PatternFill, Side
 from openpyxl.utils import get_column_letter
 from openpyxl.worksheet.table import Table, TableStyleInfo
 from openpyxl.worksheet.worksheet import Worksheet
@@ -27,8 +28,18 @@ from openpyxl.worksheet.worksheet import Worksheet
 FETCH_CHUNK_SIZE = 1000
 # Autofit uses up to this many data rows when estimating column widths.
 COLUMN_WIDTH_SAMPLE_ROWS = 5000
+MIN_COLUMN_WIDTH = 10
 DEFAULT_COLUMN_WIDTH = 12
-MAX_COLUMN_WIDTH = 60
+MAX_COLUMN_WIDTH = 35
+MAX_WRAP_COLUMN_WIDTH = 45
+
+# Regent Business School export styling
+_BRAND_MAROON = "632523"
+_ROW_STRIPE_GREY = "F2F2F2"
+_SUSPENDED_GREY = "D9D9D9"
+_BORDER_GREY = "BFBFBF"
+_FONT_NAME = "Calibri"
+_FONT_SIZE = 11
 
 from motherduck_client import (
     connect_motherduck,
@@ -314,22 +325,61 @@ def _excel_number_format(value: Any) -> str | None:
 
 
 def append_data_row(ws: Worksheet, values: Sequence[Any]) -> None:
-    """Append a data row with typed date/number Excel formats."""
+    """
+    Buffer a data row for styled export.
+
+    Rows are flushed in finish_sheet so column autofit widths can be applied
+    before the first write-only append (openpyxl writes <cols> at that point).
+    """
+    buffered: list[list[Any]] | None = getattr(ws, "_export_rows", None)
+    if buffered is None:
+        # Fallback when write_headers was not used.
+        _write_styled_data_row(ws, values, row_idx=0)
+        return
+    buffered.append(list(values))
+    widths = getattr(ws, "_export_widths", None)
+    headers = getattr(ws, "_export_headers", None)
+    if isinstance(widths, list):
+        _update_col_widths(widths, values, headers=headers)
+
+
+def _write_styled_data_row(
+    ws: Worksheet, values: Sequence[Any], *, row_idx: int
+) -> None:
+    """Write one data row with Regent styling (call only after column widths are set)."""
+    stripe = row_idx % 2 == 1
+    wrap_cols: set[int] = getattr(ws, "_export_wrap_cols", set()) or set()
     cells: list[Any] = []
-    for value in values:
-        number_format = _excel_number_format(value)
-        if number_format is None:
-            cells.append(value)
-            continue
+    for col_idx, value in enumerate(values):
         cell = WriteOnlyCell(ws, value=value)
-        cell.number_format = number_format
+        cell.font = _DATA_FONT
+        cell.border = _THIN_BORDER
+        cell.alignment = _WRAP_ALIGN if col_idx in wrap_cols else _DATA_ALIGN
+        if stripe:
+            cell.fill = _STRIPE_FILL
+        number_format = _excel_number_format(value)
+        if number_format is not None:
+            cell.number_format = number_format
         cells.append(cell)
     ws.append(cells)
 
 
-_HEADER_FILL = PatternFill(fill_type="solid", fgColor="632523")
-_HEADER_FONT = Font(color="FFFFFF", bold=True)
+_THIN_BORDER = Border(
+    left=Side(style="thin", color=_BORDER_GREY),
+    right=Side(style="thin", color=_BORDER_GREY),
+    top=Side(style="thin", color=_BORDER_GREY),
+    bottom=Side(style="thin", color=_BORDER_GREY),
+)
+_HEADER_FILL = PatternFill(fill_type="solid", fgColor=_BRAND_MAROON)
+_HEADER_FONT = Font(
+    name=_FONT_NAME, size=_FONT_SIZE, color="FFFFFF", bold=True
+)
 _HEADER_ALIGN = Alignment(horizontal="center", vertical="center", wrap_text=True)
+_DATA_FONT = Font(name=_FONT_NAME, size=_FONT_SIZE, color="000000")
+_DATA_ALIGN = Alignment(horizontal="left", vertical="center", wrap_text=False)
+_WRAP_ALIGN = Alignment(horizontal="left", vertical="top", wrap_text=True)
+_STRIPE_FILL = PatternFill(fill_type="solid", fgColor=_ROW_STRIPE_GREY)
+_SUSPENDED_FILL = PatternFill(fill_type="solid", fgColor=_SUSPENDED_GREY)
 _TABLE_STYLE = TableStyleInfo(
     name="TableStyleLight1",
     showFirstColumn=False,
@@ -375,17 +425,114 @@ def _excel_table_headers(headers: Sequence[str]) -> list[str]:
     return cleaned
 
 
-def write_headers(ws: Worksheet, headers: Sequence[str]) -> list[str]:
-    """Append styled header row (write-only safe). Returns Excel-safe names used."""
-    safe_headers = _excel_table_headers(headers)
+def _is_wrap_header(header: str) -> bool:
+    """Long-text columns: notes, comments, names (not short codes)."""
+    h = str(header or "").casefold().strip()
+    if not h:
+        return False
+    if any(token in h for token in ("note", "comment", "content", "remark")):
+        return True
+    if h.endswith(" name") or h.endswith("_name") or h.endswith("fullname"):
+        return True
+    # Full descriptive labels (exclude "Module Code", "Student No", etc.)
+    if h in {
+        "assessment",
+        "module",
+        "programme",
+        "student",
+        "course",
+        "course_display_name",
+        "user_full_name",
+    }:
+        return True
+    return False
+
+
+def _is_status_column(header: str) -> bool:
+    """True for status fields that may contain Suspended (not Mark Status)."""
+    h = str(header or "").casefold().strip()
+    if h == "status":
+        return True
+    if h.endswith(" status") and "mark" not in h:
+        return True
+    return False
+
+
+def _max_width_for_header(header: str) -> int:
+    return MAX_WRAP_COLUMN_WIDTH if _is_wrap_header(header) else MAX_COLUMN_WIDTH
+
+
+def _configure_sheet_chrome(ws: Worksheet) -> None:
+    """Hide gridlines and freeze header row (must run before cells in write-only)."""
+    try:
+        ws.sheet_view.showGridLines = False
+    except Exception:
+        pass
+    try:
+        ws.freeze_panes = "A2"
+    except Exception:
+        pass
+
+
+def _apply_column_widths(
+    ws: Worksheet, headers: Sequence[str], col_widths: Sequence[int] | None
+) -> None:
+    """Set column widths before any cells are written (required for write-only)."""
+    widths = list(col_widths) if col_widths else []
+    for idx, header in enumerate(headers):
+        max_w = _max_width_for_header(header)
+        header_width = min(len(header) + 2, max_w)
+        sampled = (
+            widths[idx] if idx < len(widths) else DEFAULT_COLUMN_WIDTH
+        )
+        width = min(max(header_width, sampled, MIN_COLUMN_WIDTH), max_w)
+        ws.column_dimensions[get_column_letter(idx + 1)].width = width
+
+
+def _write_header_row(ws: Worksheet, headers: Sequence[str]) -> None:
     cells: list[Any] = []
-    for header in safe_headers:
+    for header in headers:
         cell = WriteOnlyCell(ws, value=header)
         cell.fill = _HEADER_FILL
         cell.font = _HEADER_FONT
         cell.alignment = _HEADER_ALIGN
+        cell.border = _THIN_BORDER
         cells.append(cell)
     ws.append(cells)
+    try:
+        ws.row_dimensions[1].height = 22
+    except Exception:
+        pass
+
+
+def write_headers(ws: Worksheet, headers: Sequence[str]) -> list[str]:
+    """
+    Prepare a styled sheet header (write-only safe).
+
+    The header row is flushed in finish_sheet together with autofit widths.
+    """
+    _configure_sheet_chrome(ws)
+    safe_headers = _excel_table_headers(headers)
+    setattr(ws, "_export_headers", safe_headers)
+    setattr(ws, "_export_rows", [])
+    setattr(
+        ws,
+        "_export_widths",
+        [
+            max(MIN_COLUMN_WIDTH, min(len(h) + 2, _max_width_for_header(h)))
+            for h in safe_headers
+        ],
+    )
+    setattr(
+        ws,
+        "_export_wrap_cols",
+        {i for i, h in enumerate(safe_headers) if _is_wrap_header(h)},
+    )
+    setattr(
+        ws,
+        "_export_status_cols",
+        {i for i, h in enumerate(safe_headers) if _is_status_column(h)},
+    )
     return safe_headers
 
 
@@ -414,6 +561,29 @@ def _unique_table_name(ws: Worksheet) -> str:
     return f"{base}_{idx}"
 
 
+def _apply_suspended_conditional_format(
+    ws: Worksheet, headers: Sequence[str], data_row_count: int
+) -> None:
+    """Grey-fill cells whose status value contains 'suspended'."""
+    if data_row_count < 1:
+        return
+    last_row = data_row_count + 1
+    for idx, header in enumerate(headers):
+        if not _is_status_column(header):
+            continue
+        col = get_column_letter(idx + 1)
+        range_ref = f"{col}2:{col}{last_row}"
+        # SEARCH is case-insensitive in Excel.
+        ws.conditional_formatting.add(
+            range_ref,
+            FormulaRule(
+                formula=[f'ISNUMBER(SEARCH("suspended",{col}2))'],
+                fill=_SUSPENDED_FILL,
+                font=_DATA_FONT,
+            ),
+        )
+
+
 def finish_sheet(
     ws: Worksheet,
     headers: Sequence[str],
@@ -421,17 +591,42 @@ def finish_sheet(
     col_widths: Sequence[int] | None = None,
 ) -> None:
     """
-    Freeze header, format as Excel Table (White / Table Style Light 1) when
-    there is data, and autofit column widths.
+    Flush buffered rows with autofit widths, freeze header, format as Excel
+    Table (White / Table Style Light 1) when there is data, and apply status
+    conditional formatting.
 
     Header-only sheets skip Table creation — Excel file repair discards
     tables whose ref is only the header row.
     """
-    safe_headers = _excel_table_headers(headers)
+    _configure_sheet_chrome(ws)
+    safe_headers = list(
+        getattr(ws, "_export_headers", None) or _excel_table_headers(headers)
+    )
     column_count = len(safe_headers)
     if column_count < 1:
         return
-    ws.freeze_panes = "A2"
+
+    buffered: list[list[Any]] | None = getattr(ws, "_export_rows", None)
+    tracked_widths = getattr(ws, "_export_widths", None)
+    # Prefer widths tracked while buffering rows (full autofit). Caller-supplied
+    # widths may be sample-capped and are only a fallback.
+    widths: Sequence[int] | None = None
+    if isinstance(tracked_widths, list) and tracked_widths:
+        widths = tracked_widths
+    elif col_widths is not None:
+        widths = col_widths
+    if buffered is not None:
+        data_row_count = len(buffered)
+
+    # Column widths MUST be set before the first append in write-only mode.
+    _apply_column_widths(ws, safe_headers, widths)
+    _write_header_row(ws, safe_headers)
+
+    if buffered is not None:
+        for row_idx, values in enumerate(buffered):
+            _write_styled_data_row(ws, values, row_idx=row_idx)
+        setattr(ws, "_export_rows", [])
+
     last_col = get_column_letter(column_count)
     last_row = max(1, data_row_count + 1)
     ref = f"A1:{last_col}{last_row}"
@@ -449,31 +644,30 @@ def finish_sheet(
         # Filters without a Table — valid for empty sheets Excel would otherwise repair.
         ws.auto_filter.ref = ref
 
-    widths = list(col_widths) if col_widths else []
-    for idx in range(1, column_count + 1):
-        header_width = min(len(safe_headers[idx - 1]) + 2, MAX_COLUMN_WIDTH)
-        sampled = (
-            widths[idx - 1]
-            if idx - 1 < len(widths)
-            else DEFAULT_COLUMN_WIDTH
-        )
-        width = min(max(header_width, sampled, DEFAULT_COLUMN_WIDTH), MAX_COLUMN_WIDTH)
-        ws.column_dimensions[get_column_letter(idx)].width = width
+    _apply_suspended_conditional_format(ws, safe_headers, data_row_count)
 
 
 def _update_col_widths(
-    widths: list[int], values: Sequence[Any], sample_remaining: list[int] | None = None
+    widths: list[int],
+    values: Sequence[Any],
+    sample_remaining: list[int] | None = None,
+    headers: Sequence[str] | None = None,
 ) -> None:
-    """Track max display width per column for autofit (all rows when sample is None/unused)."""
+    """Track max display width per column for autofit."""
     if sample_remaining is not None:
         if sample_remaining[0] <= 0:
             return
         sample_remaining[0] -= 1
     for idx, value in enumerate(values):
         text = _display_width_text(value)
-        length = min(len(text) + 2, MAX_COLUMN_WIDTH)
+        max_w = (
+            _max_width_for_header(headers[idx])
+            if headers is not None and idx < len(headers)
+            else MAX_COLUMN_WIDTH
+        )
+        length = min(len(text) + 2, max_w)
         if idx >= len(widths):
-            widths.append(max(DEFAULT_COLUMN_WIDTH, length))
+            widths.append(max(MIN_COLUMN_WIDTH, length))
         else:
             widths[idx] = max(widths[idx], length)
 
@@ -492,12 +686,15 @@ def write_mapped_rows(
     field_map: Sequence[tuple[str, tuple[str, ...]]],
 ) -> int:
     write_headers(ws, headers)
-    widths = [max(DEFAULT_COLUMN_WIDTH, min(len(h) + 2, MAX_COLUMN_WIDTH)) for h in headers]
+    widths = [
+        max(MIN_COLUMN_WIDTH, min(len(h) + 2, _max_width_for_header(h)))
+        for h in headers
+    ]
     count = 0
     for raw in rows:
         row = normalize_row(raw)
         values = [format_cell(pick(row, *aliases)) for _, aliases in field_map]
-        _update_col_widths(widths, values)
+        _update_col_widths(widths, values, headers=headers)
         append_data_row(ws, values)
         count += 1
     finish_sheet(ws, headers, count, widths)
