@@ -106,3 +106,77 @@ export async function loadSignedInUser() {
     // Auth may be disabled in local development.
   }
 }
+
+export async function readResponseJson(response) {
+  if (response.status === 401) {
+    window.location.href = "/auth/login";
+    throw new Error("Sign in required");
+  }
+  const text = await response.text();
+  if (!text.trim()) {
+    throw new Error(
+      `Server returned an empty response (HTTP ${response.status}). The export may have timed out — try again with fewer programmes.`
+    );
+  }
+  try {
+    return JSON.parse(text);
+  } catch {
+    const preview = text.replace(/\s+/g, " ").trim().slice(0, 120);
+    throw new Error(
+      preview
+        ? `Unexpected server response (HTTP ${response.status}): ${preview}`
+        : `Unexpected server response (HTTP ${response.status})`
+    );
+  }
+}
+
+/**
+ * Poll an export job until done/failed. Retries transient parse/network errors
+ * (common when Render restarts under memory pressure mid-export).
+ */
+export async function pollExportJob(
+  jobId,
+  { onUpdate, intervalMs = 1500, maxTransientRetries = 8 } = {}
+) {
+  let transientFailures = 0;
+  while (true) {
+    let job;
+    try {
+      const pollResponse = await fetch(
+        `/api/export-excel/jobs/${encodeURIComponent(jobId)}`,
+        { credentials: "same-origin" }
+      );
+      job = await readResponseJson(pollResponse);
+      if (!pollResponse.ok) {
+        throw new Error(job?.error || "Could not fetch export status");
+      }
+      transientFailures = 0;
+    } catch (error) {
+      transientFailures += 1;
+      const detail = error?.message || String(error);
+      if (transientFailures > maxTransientRetries) {
+        throw new Error(
+          `Lost contact with the export job after repeated failures (${detail}). ` +
+            `The server may have restarted — try again with fewer programmes selected.`
+        );
+      }
+      if (typeof onUpdate === "function") {
+        onUpdate({
+          status: "running",
+          stage: "excel",
+          message: `Waiting for export server... (retry ${transientFailures}/${maxTransientRetries})`
+        });
+      }
+      await new Promise((resolve) => setTimeout(resolve, intervalMs));
+      continue;
+    }
+
+    if (typeof onUpdate === "function") onUpdate(job);
+
+    if (job?.status === "done") return job;
+    if (job?.status === "failed") {
+      throw new Error(job?.error || job?.message || "Export job failed");
+    }
+    await new Promise((resolve) => setTimeout(resolve, intervalMs));
+  }
+}

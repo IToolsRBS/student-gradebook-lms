@@ -89,6 +89,17 @@ const programmesCache = new Map();
 let categoriesCache = null;
 const exportJobs = new Map();
 const EXPORT_JOB_TTL_MS = 1000 * 60 * 30;
+const MAX_BATCH_PROGRAMMES = 20;
+
+function assertBatchProgrammeLimit(programmeCodes, res) {
+  if (programmeCodes.length <= MAX_BATCH_PROGRAMMES) return true;
+  res.status(400).json({
+    error:
+      `Too many programmes selected (${programmeCodes.length}). ` +
+      `Export at most ${MAX_BATCH_PROGRAMMES} programmes per batch to avoid server timeouts — split into smaller batches.`
+  });
+  return false;
+}
 
 function readEnvFromFile(filePath, keys) {
   if (!fs.existsSync(filePath)) return null;
@@ -256,8 +267,22 @@ function cleanupOldJobs() {
 
 function publicJobPayload(job) {
   if (!job) return null;
-  const { logs: _logs, filePath: _filePath, ...rest } = job;
-  return rest;
+  // Whitelist only — never leak file paths, env noise, or oversized fields.
+  return {
+    jobId: job.jobId,
+    status: job.status,
+    stage: job.stage,
+    message: job.message,
+    error: job.error,
+    fileName: job.fileName,
+    startedAt: job.startedAt,
+    updatedAt: job.updatedAt,
+    timingsMs: job.timingsMs || {},
+    categoryName: job.categoryName,
+    programmeCodes: job.programmeCodes,
+    programmeCode: job.programmeCode,
+    reportType: job.reportType
+  };
 }
 
 function updateJob(jobId, patch) {
@@ -553,6 +578,7 @@ app.post("/api/export-excel/start", async (req, res) => {
       error: "categoryName and at least one programmeCode/programmeCodes are required"
     });
   }
+  if (!assertBatchProgrammeLimit(programmeCodes, res)) return;
   if (!motherduckToken) {
     return res.status(500).json({
       error: "Missing MOTHERDUCK_TOKEN in environment/.env"
@@ -860,6 +886,7 @@ app.post("/api/export-activity-completion/start", async (req, res) => {
   if (!programmeCodes.length) {
     return res.status(400).json({ error: "At least one programme is required" });
   }
+  if (!assertBatchProgrammeLimit(programmeCodes, res)) return;
   if (!motherduckToken) {
     return res.status(500).json({
       error: "Missing MOTHERDUCK_TOKEN in environment/.env"
@@ -1021,6 +1048,9 @@ app.post("/api/export-inactivity-report/start", async (req, res) => {
     return res.status(400).json({
       error: "inactivityPeriod must be 7, 14, 30, never, or a positive day count"
     });
+  }
+  if (programmeCodes.length && !assertBatchProgrammeLimit(programmeCodes, res)) {
+    return;
   }
   if (!motherduckToken) {
     return res.status(500).json({
@@ -1198,6 +1228,7 @@ app.post("/api/export-missed-submissions/start", async (req, res) => {
   if (dueFrom && dueTo && dueFrom > dueTo) {
     return res.status(400).json({ error: "dueFrom must be on or before dueTo" });
   }
+  if (!assertBatchProgrammeLimit(programmeCodes, res)) return;
   if (!motherduckToken) {
     return res.status(500).json({
       error: "Missing MOTHERDUCK_TOKEN in environment/.env"
@@ -1391,6 +1422,7 @@ app.post("/api/export-late-submissions/start", async (req, res) => {
   if (dueFrom && dueTo && dueFrom > dueTo) {
     return res.status(400).json({ error: "dueFrom must be on or before dueTo" });
   }
+  if (!assertBatchProgrammeLimit(programmeCodes, res)) return;
   if (!motherduckToken) {
     return res.status(500).json({
       error: "Missing MOTHERDUCK_TOKEN in environment/.env"

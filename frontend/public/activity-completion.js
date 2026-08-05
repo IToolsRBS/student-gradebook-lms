@@ -1,4 +1,4 @@
-import { loadSignedInUser, startClock } from "./shared.js";
+import { loadSignedInUser, startClock, readResponseJson, pollExportJob } from "./shared.js";
 
 const exportBtn = document.getElementById("exportBtn");
 const exportStatusEl = document.getElementById("exportStatus");
@@ -415,29 +415,6 @@ function initMultiSelectDropdown(dropdownEl, placeholder, config = {}) {
   };
 }
 
-async function readResponseJson(response) {
-  if (response.status === 401) {
-    window.location.href = "/auth/login";
-    throw new Error("Sign in required");
-  }
-  const text = await response.text();
-  if (!text.trim()) {
-    throw new Error(
-      `Server returned an empty response (HTTP ${response.status}).`
-    );
-  }
-  try {
-    return JSON.parse(text);
-  } catch {
-    const preview = text.replace(/\s+/g, " ").trim().slice(0, 120);
-    throw new Error(
-      preview
-        ? `Unexpected server response (HTTP ${response.status}): ${preview}`
-        : `Unexpected server response (HTTP ${response.status})`
-    );
-  }
-}
-
 async function fetchJson(url) {
   const response = await fetch(url, { credentials: "same-origin" });
   const payload = await readResponseJson(response);
@@ -775,34 +752,20 @@ exportBtn?.addEventListener("click", async () => {
     }
 
     const jobId = startPayload.jobId;
-    let latestJob = null;
-    while (true) {
-      const pollResponse = await fetch(
-        `/api/export-excel/jobs/${encodeURIComponent(jobId)}`,
-        { credentials: "same-origin" }
-      );
-      const job = await readResponseJson(pollResponse);
-      if (!pollResponse.ok) {
-        throw new Error(job?.error || "Could not fetch export status");
+    const latestJob = await pollExportJob(jobId, {
+      onUpdate: (job) => {
+        const stageText = job?.message || `Working: ${job?.stage || "processing"}`;
+        setProgressUi({
+          visible: true,
+          stage: job?.stage || "queued",
+          text: stageText,
+          elapsedMs: Date.now() - startedAt,
+          failed: job?.status === "failed",
+          done: job?.status === "done"
+        });
+        if (exportStatusEl) exportStatusEl.textContent = stageText;
       }
-      latestJob = job;
-      const stageText = job?.message || `Working: ${job?.stage || "processing"}`;
-      setProgressUi({
-        visible: true,
-        stage: job?.stage || "queued",
-        text: stageText,
-        elapsedMs: Date.now() - startedAt,
-        failed: job?.status === "failed",
-        done: job?.status === "done"
-      });
-      if (exportStatusEl) exportStatusEl.textContent = stageText;
-
-      if (job?.status === "done") break;
-      if (job?.status === "failed") {
-        throw new Error(job?.error || job?.message || "Export job failed");
-      }
-      await new Promise((resolve) => setTimeout(resolve, 1500));
-    }
+    });
 
     exportBtn.textContent = "Downloading...";
     if (exportStatusEl) exportStatusEl.textContent = "Downloading Excel...";
