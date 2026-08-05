@@ -89,7 +89,11 @@ const programmesCache = new Map();
 let categoriesCache = null;
 const exportJobs = new Map();
 const EXPORT_JOB_TTL_MS = 1000 * 60 * 30;
-const MAX_BATCH_PROGRAMMES = 20;
+// Full intake exports can include ~40 programmes; keep headroom above that.
+const MAX_BATCH_PROGRAMMES = Math.max(
+  40,
+  Number(process.env.MAX_BATCH_PROGRAMMES || 50) || 50
+);
 
 function assertBatchProgrammeLimit(programmeCodes, res) {
   if (programmeCodes.length <= MAX_BATCH_PROGRAMMES) return true;

@@ -27,6 +27,9 @@ from openpyxl.worksheet.worksheet import Worksheet
 
 # Stream MotherDuck results in chunks to avoid pandas DataFrame spikes.
 FETCH_CHUNK_SIZE = 2000
+# Above this row count, skip Excel Table objects (auto-filter only) to keep
+# multi-programme exports memory-safe on constrained hosts.
+_LARGE_SHEET_TABLE_ROW_LIMIT = 75_000
 # Kept for callers that still sample widths (write-only uses heuristics instead).
 COLUMN_WIDTH_SAMPLE_ROWS = 200
 MIN_COLUMN_WIDTH = 10
@@ -328,9 +331,9 @@ def append_data_row(ws: Worksheet, values: Sequence[Any]) -> None:
     """
     Stream one data row immediately (write-only safe).
 
-    Every cell gets a thin border so the sheet reads as a proper table.
-    Rows are not buffered — critical for large gradebook exports on Render.
-    Column widths are set heuristically in write_headers before the first append.
+    Prefer raw values for speed on large multi-programme exports. Excel Table
+    Style Light 1 supplies the cell grid/outlines. WriteOnlyCell is only used
+    for wrapped text or date/time values.
     """
     row_idx = int(getattr(ws, "_export_data_row", 0) or 0)
     setattr(ws, "_export_data_row", row_idx + 1)
@@ -338,16 +341,22 @@ def append_data_row(ws: Worksheet, values: Sequence[Any]) -> None:
 
     cells: list[Any] = []
     for col_idx, value in enumerate(values):
+        wrap = col_idx in wrap_cols
+        # Skip number formats for int/float — raw values are far cheaper at scale.
+        number_format = (
+            _excel_number_format(value)
+            if isinstance(value, (datetime, date)) and not isinstance(value, bool)
+            else None
+        )
+        if number_format is None and not wrap:
+            cells.append(value)
+            continue
         cell = WriteOnlyCell(ws, value=value)
-        cell.font = _DATA_FONT
-        cell.border = _THIN_BORDER
-        number_format = _excel_number_format(value)
         if number_format is not None:
             cell.number_format = number_format
-        if col_idx in wrap_cols:
+        if wrap:
             cell.alignment = _WRAP_ALIGN
-        else:
-            cell.alignment = _DATA_ALIGN
+            cell.font = _DATA_FONT
         cells.append(cell)
     ws.append(cells)
 
@@ -367,7 +376,7 @@ _DATA_FONT = Font(name=_FONT_NAME, size=_FONT_SIZE, color="000000")
 _DATA_ALIGN = Alignment(horizontal="left", vertical="center", wrap_text=False)
 _WRAP_ALIGN = Alignment(horizontal="left", vertical="top", wrap_text=True)
 _SUSPENDED_FILL = PatternFill(fill_type="solid", fgColor=_SUSPENDED_GREY)
-# Row striping from Excel table style; cell outlines come from per-cell borders.
+# Row striping + cell outlines come from Excel table style (fast at scale).
 _TABLE_STYLE = TableStyleInfo(
     name="TableStyleLight1",
     showFirstColumn=False,
@@ -626,7 +635,7 @@ def finish_sheet(
     last_row = max(1, data_row_count + 1)
     ref = f"A1:{last_col}{last_row}"
 
-    if data_row_count >= 1:
+    if data_row_count >= 1 and data_row_count <= _LARGE_SHEET_TABLE_ROW_LIMIT:
         table = Table(displayName=_unique_table_name(ws), ref=ref)
         table.totalsRowShown = False
         table.tableStyleInfo = _TABLE_STYLE
@@ -641,9 +650,11 @@ def finish_sheet(
             )
             ws.add_table(table)
     else:
+        # Empty sheets, or very large detail sheets: filters without Table XML.
         ws.auto_filter.ref = ref
 
-    _apply_suspended_conditional_format(ws, safe_headers, data_row_count)
+    if data_row_count <= _LARGE_SHEET_TABLE_ROW_LIMIT:
+        _apply_suspended_conditional_format(ws, safe_headers, data_row_count)
 
 
 def _update_col_widths(
@@ -1753,6 +1764,7 @@ def build_workbook(
             )
         else:
             writer(ws, conn, schema, export_codes, category_name)
+        # Release sheet-local buffers between large marts.
         gc.collect()
 
     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
