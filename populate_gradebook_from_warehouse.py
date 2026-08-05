@@ -27,9 +27,6 @@ from openpyxl.worksheet.worksheet import Worksheet
 
 # Stream MotherDuck results in chunks to avoid pandas DataFrame spikes.
 FETCH_CHUNK_SIZE = 2000
-# Above this row count, skip Excel Table objects (auto-filter only) to keep
-# multi-programme exports memory-safe on constrained hosts.
-_LARGE_SHEET_TABLE_ROW_LIMIT = 75_000
 # Kept for callers that still sample widths (write-only uses heuristics instead).
 COLUMN_WIDTH_SAMPLE_ROWS = 200
 MIN_COLUMN_WIDTH = 10
@@ -464,19 +461,33 @@ def _heuristic_column_width(header: str) -> int:
     Use header-based heuristics (true content autofit would require buffering).
     """
     max_w = _max_width_for_header(header)
-    h = str(header or "").casefold()
+    h = str(header or "").casefold().strip()
+
+    # Explicit widths for common gradebook columns.
+    if h == "programme":
+        return 12
+    if h == "email":
+        return min(34, max_w)
+    if h in {"module code", "course code"}:
+        return min(24, max_w)
+    if h in {
+        "due date",
+        "submitted date",
+        "effective deadline",
+        "last moodle access",
+        "note timestamp",
+    } or ("due" in h and "date" in h) or h.endswith(" deadline"):
+        return min(22, max_w)
+
     if _is_wrap_header(header):
         return max_w
     if any(
         token in h
         for token in (
-            "code",
             " no",
             "number",
-            "email",
             "type",
             "status",
-            "date",
             "mark",
             "grade",
             "hours",
@@ -635,7 +646,9 @@ def finish_sheet(
     last_row = max(1, data_row_count + 1)
     ref = f"A1:{last_col}{last_row}"
 
-    if data_row_count >= 1 and data_row_count <= _LARGE_SHEET_TABLE_ROW_LIMIT:
+    if data_row_count >= 1:
+        # Always format as an Excel Table so row striping (and filter UI) apply,
+        # including on large Student Assessment Detail sheets.
         table = Table(displayName=_unique_table_name(ws), ref=ref)
         table.totalsRowShown = False
         table.tableStyleInfo = _TABLE_STYLE
@@ -650,11 +663,9 @@ def finish_sheet(
             )
             ws.add_table(table)
     else:
-        # Empty sheets, or very large detail sheets: filters without Table XML.
         ws.auto_filter.ref = ref
 
-    if data_row_count <= _LARGE_SHEET_TABLE_ROW_LIMIT:
-        _apply_suspended_conditional_format(ws, safe_headers, data_row_count)
+    _apply_suspended_conditional_format(ws, safe_headers, data_row_count)
 
 
 def _update_col_widths(
@@ -1206,7 +1217,6 @@ def write_student_summary(
         "Student",
         "Email",
         "Status",
-        "Mark Status",
         "Modules",
         "Missed Submissions",
         "Late Submissions",
@@ -1221,7 +1231,6 @@ def write_student_summary(
         ("Student", ("student",)),
         ("Email", ("email",)),
         ("Status", ("status",)),
-        ("Mark Status", ("mark_status",)),
         ("Modules", ("total_modules", "modules")),
         ("Missed Submissions", ("missed_submissions", "missed")),
         ("Late Submissions", ("late_submissions", "late")),
