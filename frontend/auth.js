@@ -9,6 +9,8 @@ const SCOPES = ["openid", "profile", "email", "User.Read"];
 export const ROLE_FULL = "full";
 /** Restricted: Full Gradebook Export + Intake Summary only. */
 export const ROLE_GRADEBOOK = "gradebook";
+/** Admin: all reports + export audit log. */
+export const ROLE_ADMIN = "admin";
 
 export const ALL_FEATURES = [
   "all-reports",
@@ -17,12 +19,17 @@ export const ALL_FEATURES = [
   "activity-completion",
   "inactivity-report",
   "missed-submission",
-  "late-submission"
+  "late-submission",
+  "audit-log"
 ];
 
 const ROLE_DEFINITIONS = {
-  [ROLE_FULL]: {
+  [ROLE_ADMIN]: {
     features: ALL_FEATURES,
+    homePath: "/"
+  },
+  [ROLE_FULL]: {
+    features: ALL_FEATURES.filter((feature) => feature !== "audit-log"),
     homePath: "/"
   },
   [ROLE_GRADEBOOK]: {
@@ -45,7 +52,9 @@ export const PATH_FEATURES = {
   "/missed-submission": "missed-submission",
   "/missed-submission.html": "missed-submission",
   "/late-submission": "late-submission",
-  "/late-submission.html": "late-submission"
+  "/late-submission.html": "late-submission",
+  "/audit-log": "audit-log",
+  "/audit-log.html": "audit-log"
 };
 
 /** API path prefix → required feature (shared metadata APIs stay open to any signed-in role). */
@@ -55,7 +64,9 @@ export const API_FEATURES = {
   "/api/export-activity-completion/start": "activity-completion",
   "/api/export-inactivity-report/start": "inactivity-report",
   "/api/export-missed-submissions/start": "missed-submission",
-  "/api/export-late-submissions/start": "late-submission"
+  "/api/export-late-submissions/start": "late-submission",
+  "/api/audit-log": "audit-log",
+  "/api/audit-log/export": "audit-log"
 };
 
 function isTruthy(value) {
@@ -79,11 +90,15 @@ export function resolveAuthConfig(readEnvValue) {
   const gradebookOnlyEmails = parseAllowedEmails(
     readEnvValue(["APP_ROLE_GRADEBOOK_ONLY_EMAILS"])
   );
+  const adminEmails = parseAllowedEmails(
+    readEnvValue(["APP_ROLE_ADMIN_EMAILS"])
+  );
 
   if (!enabledFlag) {
     return {
       enabled: false,
-      gradebookOnlyEmails
+      gradebookOnlyEmails,
+      adminEmails
     };
   }
 
@@ -119,12 +134,20 @@ export function resolveAuthConfig(readEnvValue) {
     allowedDomain,
     allowedEmails,
     authPrompt,
-    gradebookOnlyEmails
+    gradebookOnlyEmails,
+    adminEmails
   };
 }
 
 export function resolveUserRole(email, config) {
   const normalized = String(email || "").trim().toLowerCase();
+  if (
+    normalized &&
+    config?.adminEmails instanceof Set &&
+    config.adminEmails.has(normalized)
+  ) {
+    return ROLE_ADMIN;
+  }
   if (
     normalized &&
     config?.gradebookOnlyEmails instanceof Set &&

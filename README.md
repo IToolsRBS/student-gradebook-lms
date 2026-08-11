@@ -34,5 +34,17 @@ Auth is **required** when `NODE_ENV=production`. Register an app in [Microsoft E
    - `AZURE_ALLOWED_EMAILS` — comma-separated allowlist, e.g. `you@regent.ac.za,colleague@regent.ac.za`
    - `AZURE_ALLOWED_DOMAIN=regent.ac.za` (optional fallback when no allowlist is set)
    - `APP_ROLE_GRADEBOOK_ONLY_EMAILS` — optional comma-separated emails limited to **Full Gradebook Export** and **Intake Summary** (other reports stay hidden and their APIs are blocked). Everyone else keeps full access.
+   - `APP_ROLE_ADMIN_EMAILS` — comma-separated admin emails. Admins get every report **plus** the **Export Audit Log** page (`/audit-log`). Non-admins cannot open that page or its APIs.
+
+### Export audit log
+
+Every export is recorded against the signed-in Microsoft email:
+
+- Events: `export_started`, `export_completed`, `export_failed`, `export_downloaded`
+- Written to JSONL under `AUDIT_LOG_DIR` (default: `EXPORT_OUTPUT_DIR/audit/export-audit.jsonl`)
+- Also emitted to server logs as `[audit] ...` (visible in Render logs)
+- **Admins only:** browse the log at `/audit-log` (table + filters) and download Excel-compatible CSV via **Export to Excel**
+
+On Render without a persistent disk, the JSONL file resets on redeploy — use Render logs for longer retention, or set `AUDIT_LOG_DIR` on a persistent volume.
 
 `BASE_URL` is optional on Render — `RENDER_EXTERNAL_URL` is used automatically.

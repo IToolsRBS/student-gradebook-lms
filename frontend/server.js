@@ -8,8 +8,10 @@ import {
   createAuthRouter,
   createRequireAuth,
   createSessionMiddleware,
-  resolveAuthConfig
+  resolveAuthConfig,
+  getAccessForEmail
 } from "./auth.js";
+import { createAuditLogger } from "./audit-log.js";
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -138,6 +140,10 @@ const exportOutputDir =
   readEnvValue(["EXPORT_OUTPUT_DIR"]) ||
   path.join(os.tmpdir(), "gradebook-exports");
 fs.mkdirSync(exportOutputDir, { recursive: true });
+
+const auditLogDir =
+  readEnvValue(["AUDIT_LOG_DIR"]) || path.join(exportOutputDir, "audit");
+const auditLogger = createAuditLogger({ logDir: auditLogDir });
 
 const pythonBin =
   readEnvValue(["PYTHON_BIN"]) ||
@@ -289,10 +295,85 @@ function publicJobPayload(job) {
   };
 }
 
+function getRequestUser(req) {
+  const account = req?.session?.account;
+  if (!account?.email) {
+    return {
+      email: authConfig.enabled ? "unknown" : "local-dev",
+      name: account?.name || "",
+      role: authConfig.enabled ? "unknown" : "local-dev"
+    };
+  }
+  const access = getAccessForEmail(account.email, authConfig);
+  return {
+    email: String(account.email).toLowerCase(),
+    name: account.name || "",
+    role: access.role || account.role || "full"
+  };
+}
+
+function auditFiltersFromJob(job) {
+  if (!job) return null;
+  const filters = {};
+  if (job.categoryName) filters.categoryName = job.categoryName;
+  if (job.programmeCodes?.length) filters.programmeCodes = job.programmeCodes;
+  if (job.programmeCode) filters.programmeCode = job.programmeCode;
+  if (job.moduleCodes?.length) filters.moduleCodes = job.moduleCodes;
+  if (job.assessmentTypes?.length) filters.assessmentTypes = job.assessmentTypes;
+  if (job.assessments?.length) filters.assessments = job.assessments;
+  if (job.statuses?.length) filters.statuses = job.statuses;
+  if (job.inactivityPeriod) filters.inactivityPeriod = job.inactivityPeriod;
+  if (job.dueFrom) filters.dueFrom = job.dueFrom;
+  if (job.dueTo) filters.dueTo = job.dueTo;
+  return Object.keys(filters).length ? filters : null;
+}
+
+function writeExportAudit(event, job, extra = {}) {
+  const user = job?.requestedBy || {};
+  auditLogger.append({
+    event,
+    jobId: job?.jobId || null,
+    reportType: job?.reportType || "gradebook",
+    status: extra.status || job?.status || null,
+    userEmail: user.email || extra.userEmail || null,
+    userName: user.name || extra.userName || null,
+    userRole: user.role || extra.userRole || null,
+    filters: auditFiltersFromJob(job),
+    fileName: job?.fileName || null,
+    error: job?.error || extra.error || null,
+    timingsMs: job?.timingsMs || null,
+    ...extra
+  });
+}
+
+function registerExportJob(req, job) {
+  const requestedBy = getRequestUser(req);
+  const fullJob = {
+    ...job,
+    requestedBy,
+    reportType: job.reportType || "gradebook"
+  };
+  exportJobs.set(job.jobId, fullJob);
+  writeExportAudit("export_started", fullJob, { status: "queued" });
+  return fullJob;
+}
+
 function updateJob(jobId, patch) {
   const current = exportJobs.get(jobId);
   if (!current) return;
-  exportJobs.set(jobId, { ...current, ...patch, updatedAt: Date.now() });
+  const next = { ...current, ...patch, updatedAt: Date.now() };
+  exportJobs.set(jobId, next);
+  if (
+    patch?.status &&
+    patch.status !== current.status &&
+    (patch.status === "done" || patch.status === "failed")
+  ) {
+    writeExportAudit(
+      patch.status === "done" ? "export_completed" : "export_failed",
+      next,
+      { status: patch.status }
+    );
+  }
 }
 
 async function waitForReadableFile(filePath, maxAttempts = 6, baseDelayMs = 400) {
@@ -412,6 +493,10 @@ app.get(
     res.sendFile(path.join(__dirname, "public", "late-submission.html"));
   }
 );
+
+app.get(["/audit-log", "/audit-log/", "/audit-log.html"], (_req, res) => {
+  res.sendFile(path.join(__dirname, "public", "audit-log.html"));
+});
 
 app.use(express.static(path.join(__dirname, "public")));
 app.use(express.static(__dirname));
@@ -592,7 +677,7 @@ app.post("/api/export-excel/start", async (req, res) => {
   cleanupOldJobs();
   const jobId = makeJobId();
   const startedAt = Date.now();
-  exportJobs.set(jobId, {
+  registerExportJob(req, {
     jobId,
     status: "queued",
     stage: "queued",
@@ -602,6 +687,7 @@ app.post("/api/export-excel/start", async (req, res) => {
     categoryName,
     programmeCodes,
     programmeCode: programmeCodes.length === 1 ? programmeCodes[0] : undefined,
+    reportType: "gradebook",
     timingsMs: {}
   });
 
@@ -729,7 +815,7 @@ app.post("/api/export-intake-summary/start", async (req, res) => {
   cleanupOldJobs();
   const jobId = makeJobId();
   const startedAt = Date.now();
-  exportJobs.set(jobId, {
+  registerExportJob(req, {
     jobId,
     status: "queued",
     stage: "queued",
@@ -900,7 +986,7 @@ app.post("/api/export-activity-completion/start", async (req, res) => {
   cleanupOldJobs();
   const jobId = makeJobId();
   const startedAt = Date.now();
-  exportJobs.set(jobId, {
+  registerExportJob(req, {
     jobId,
     status: "queued",
     stage: "queued",
@@ -1065,7 +1151,7 @@ app.post("/api/export-inactivity-report/start", async (req, res) => {
   cleanupOldJobs();
   const jobId = makeJobId();
   const startedAt = Date.now();
-  exportJobs.set(jobId, {
+  registerExportJob(req, {
     jobId,
     status: "queued",
     stage: "queued",
@@ -1242,7 +1328,7 @@ app.post("/api/export-missed-submissions/start", async (req, res) => {
   cleanupOldJobs();
   const jobId = makeJobId();
   const startedAt = Date.now();
-  exportJobs.set(jobId, {
+  registerExportJob(req, {
     jobId,
     status: "queued",
     stage: "queued",
@@ -1436,7 +1522,7 @@ app.post("/api/export-late-submissions/start", async (req, res) => {
   cleanupOldJobs();
   const jobId = makeJobId();
   const startedAt = Date.now();
-  exportJobs.set(jobId, {
+  registerExportJob(req, {
     jobId,
     status: "queued",
     stage: "queued",
@@ -1582,6 +1668,41 @@ app.get("/api/export-excel/jobs/:jobId", (req, res) => {
   res.json(publicJobPayload(job));
 });
 
+app.get("/api/audit-log", (req, res) => {
+  const limit = Number(req.query.limit || 200);
+  const events = auditLogger.filterEvents(auditLogger.readRecent(limit), {
+    email: req.query.email,
+    reportType: req.query.reportType,
+    event: req.query.event
+  });
+  res.setHeader("Cache-Control", "no-store");
+  res.json({
+    ok: true,
+    logPath: auditLogger.logPath,
+    count: events.length,
+    events
+  });
+});
+
+app.get("/api/audit-log/export", (req, res) => {
+  const limit = Number(req.query.limit || 5000);
+  const events = auditLogger.filterEvents(auditLogger.readRecent(limit), {
+    email: req.query.email,
+    reportType: req.query.reportType,
+    event: req.query.event
+  });
+  const stamp = new Date().toISOString().slice(0, 10);
+  const fileName = `GRAB-audit-log-${stamp}.csv`;
+  const csv = auditLogger.toCsv(events);
+  res.setHeader("Cache-Control", "no-store");
+  res.setHeader("Content-Type", "text/csv; charset=utf-8");
+  res.setHeader(
+    "Content-Disposition",
+    `attachment; filename="${fileName}"`
+  );
+  res.send(csv);
+});
+
 app.get("/api/export-excel/jobs/:jobId/download", async (req, res) => {
   const jobId = String(req.params.jobId || "");
   const job = exportJobs.get(jobId);
@@ -1593,6 +1714,13 @@ app.get("/api/export-excel/jobs/:jobId/download", async (req, res) => {
   }
   try {
     await waitForReadableFile(job.filePath);
+    const downloader = getRequestUser(req);
+    writeExportAudit("export_downloaded", job, {
+      status: "downloaded",
+      userEmail: downloader.email,
+      userName: downloader.name,
+      userRole: downloader.role
+    });
     sendExportDownload(res, job);
   } catch (error) {
     console.error(`[export-download:${jobId}]`, error);
@@ -1624,7 +1752,9 @@ app.get("*", (req, res) => {
     "/missed-submission": "missed-submission.html",
     "/missed-submission.html": "missed-submission.html",
     "/late-submission": "late-submission.html",
-    "/late-submission.html": "late-submission.html"
+    "/late-submission.html": "late-submission.html",
+    "/audit-log": "audit-log.html",
+    "/audit-log.html": "audit-log.html"
   };
   const pageFile = pageFileByPath[normalized] || pageFileByPath[req.path];
   if (pageFile) {
@@ -1661,4 +1791,5 @@ app.listen(port, host, () => {
       "Microsoft sign-in disabled — set AZURE_CLIENT_ID and related env vars to enable."
     );
   }
+  console.log(`Export audit log: ${auditLogger.logPath}`);
 });
