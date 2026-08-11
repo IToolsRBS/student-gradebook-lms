@@ -143,7 +143,6 @@ fs.mkdirSync(exportOutputDir, { recursive: true });
 
 const auditLogDir =
   readEnvValue(["AUDIT_LOG_DIR"]) || path.join(exportOutputDir, "audit");
-const auditLogger = createAuditLogger({ logDir: auditLogDir });
 
 const pythonBin =
   readEnvValue(["PYTHON_BIN"]) ||
@@ -238,8 +237,57 @@ function runProcess(command, args, cwd, extraEnv = {}, options = {}) {
         elapsedMs: Date.now() - startedAt
       });
     });
+
+    if (options.stdin != null) {
+      child.stdin.write(String(options.stdin));
+      child.stdin.end();
+    }
   });
 }
+
+async function persistAuditEventToWarehouse(entry) {
+  if (!motherduckToken) return;
+  const result = await runProcess(
+    pythonBin,
+    ["audit_warehouse.py", "append"],
+    projectRoot,
+    motherduckEnv(),
+    {
+      stdin: JSON.stringify(entry),
+      logPrefix: "[audit-warehouse]"
+    }
+  );
+  if (result.code !== 0) {
+    throw new Error(result.output || "audit_warehouse append failed");
+  }
+}
+
+async function loadAuditEventsFromWarehouse(limit) {
+  if (!motherduckToken) return [];
+  const result = await runProcess(
+    pythonBin,
+    ["audit_warehouse.py", "list", "--limit", String(limit)],
+    projectRoot,
+    motherduckEnv(),
+    { logPrefix: "[audit-warehouse]" }
+  );
+  if (result.code !== 0) {
+    throw new Error(result.output || "audit_warehouse list failed");
+  }
+  const lines = result.output
+    .split(/\r?\n/)
+    .map((line) => line.trim())
+    .filter(Boolean);
+  const jsonLine = lines[lines.length - 1];
+  const payload = JSON.parse(jsonLine);
+  return Array.isArray(payload?.events) ? payload.events : [];
+}
+
+const auditLogger = createAuditLogger({
+  logDir: auditLogDir,
+  persistEvent: motherduckToken ? persistAuditEventToWarehouse : null,
+  loadEvents: motherduckToken ? loadAuditEventsFromWarehouse : null
+});
 
 async function runWarehouseList(command, extraArgs = []) {
   const result = await runProcess(
@@ -1668,39 +1716,61 @@ app.get("/api/export-excel/jobs/:jobId", (req, res) => {
   res.json(publicJobPayload(job));
 });
 
-app.get("/api/audit-log", (req, res) => {
-  const limit = Number(req.query.limit || 200);
-  const events = auditLogger.filterEvents(auditLogger.readRecent(limit), {
-    email: req.query.email,
-    reportType: req.query.reportType,
-    event: req.query.event
-  });
-  res.setHeader("Cache-Control", "no-store");
-  res.json({
-    ok: true,
-    logPath: auditLogger.logPath,
-    count: events.length,
-    events
-  });
+app.get("/api/audit-log", async (req, res) => {
+  try {
+    const limit = Number(req.query.limit || 1000);
+    const events = auditLogger.filterEvents(
+      await auditLogger.readRecent(limit),
+      {
+        email: req.query.email,
+        reportType: req.query.reportType,
+        event: req.query.event
+      }
+    );
+    res.setHeader("Cache-Control", "no-store");
+    res.json({
+      ok: true,
+      durable: Boolean(motherduckToken),
+      store: motherduckToken ? "motherduck+local" : "local",
+      logPath: auditLogger.logPath,
+      count: events.length,
+      events
+    });
+  } catch (error) {
+    console.error("[audit-log]", error);
+    res.status(500).json({
+      error: `Could not load audit log: ${error?.message || error}`
+    });
+  }
 });
 
-app.get("/api/audit-log/export", (req, res) => {
-  const limit = Number(req.query.limit || 5000);
-  const events = auditLogger.filterEvents(auditLogger.readRecent(limit), {
-    email: req.query.email,
-    reportType: req.query.reportType,
-    event: req.query.event
-  });
-  const stamp = new Date().toISOString().slice(0, 10);
-  const fileName = `GRAB-audit-log-${stamp}.csv`;
-  const csv = auditLogger.toCsv(events);
-  res.setHeader("Cache-Control", "no-store");
-  res.setHeader("Content-Type", "text/csv; charset=utf-8");
-  res.setHeader(
-    "Content-Disposition",
-    `attachment; filename="${fileName}"`
-  );
-  res.send(csv);
+app.get("/api/audit-log/export", async (req, res) => {
+  try {
+    const limit = Number(req.query.limit || 5000);
+    const events = auditLogger.filterEvents(
+      await auditLogger.readRecent(limit),
+      {
+        email: req.query.email,
+        reportType: req.query.reportType,
+        event: req.query.event
+      }
+    );
+    const stamp = new Date().toISOString().slice(0, 10);
+    const fileName = `GRAB-audit-log-${stamp}.csv`;
+    const csv = auditLogger.toCsv(events);
+    res.setHeader("Cache-Control", "no-store");
+    res.setHeader("Content-Type", "text/csv; charset=utf-8");
+    res.setHeader(
+      "Content-Disposition",
+      `attachment; filename="${fileName}"`
+    );
+    res.send(csv);
+  } catch (error) {
+    console.error("[audit-log-export]", error);
+    res.status(500).json({
+      error: `Could not export audit log: ${error?.message || error}`
+    });
+  }
 });
 
 app.get("/api/export-excel/jobs/:jobId/download", async (req, res) => {
@@ -1792,4 +1862,13 @@ app.listen(port, host, () => {
     );
   }
   console.log(`Export audit log: ${auditLogger.logPath}`);
+  if (motherduckToken) {
+    console.log(
+      "Export audit durable store: MotherDuck grab_app.export_audit"
+    );
+  } else {
+    console.warn(
+      "Export audit durable store unavailable — set MOTHERDUCK_TOKEN to keep history across redeploys."
+    );
+  }
 });

@@ -198,6 +198,13 @@ async function loadAuditLog() {
     allEvents = Array.isArray(payload.events) ? payload.events : [];
     populateReportFilter(allEvents);
     renderTable();
+    if (auditStatusEl) {
+      const storeLabel =
+        payload.store === "motherduck+local"
+          ? "Stored permanently in MotherDuck"
+          : "Local cache only (not durable across redeploys)";
+      auditStatusEl.textContent = `Showing ${getFilteredEvents().length} of ${allEvents.length} events. ${storeLabel}.`;
+    }
   } catch (error) {
     allEvents = [];
     if (auditTableBody) {

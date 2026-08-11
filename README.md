@@ -41,10 +41,11 @@ Auth is **required** when `NODE_ENV=production`. Register an app in [Microsoft E
 Every export is recorded against the signed-in Microsoft email:
 
 - Events: `export_started`, `export_completed`, `export_failed`, `export_downloaded`
-- Written to JSONL under `AUDIT_LOG_DIR` (default: `EXPORT_OUTPUT_DIR/audit/export-audit.jsonl`)
-- Also emitted to server logs as `[audit] ...` (visible in Render logs)
+- **Durable store:** MotherDuck table `grab_app.export_audit` (created automatically). This survives Render redeploys.
+- Local JSONL under `AUDIT_LOG_DIR` is only a short-lived cache (`/tmp` is wiped on redeploy).
+- Also emitted to server logs as `[audit] ...`
 - **Admins only:** browse the log at `/audit-log` (table + filters) and download Excel-compatible CSV via **Export to Excel**
 
-On Render without a persistent disk, the JSONL file resets on redeploy — use Render logs for longer retention, or set `AUDIT_LOG_DIR` on a persistent volume.
+Optional overrides: `AUDIT_WAREHOUSE_SCHEMA` (default `grab_app`), `AUDIT_WAREHOUSE_TABLE` (default `export_audit`).
 
 `BASE_URL` is optional on Render — `RENDER_EXTERNAL_URL` is used automatically.

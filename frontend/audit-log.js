@@ -1,34 +1,50 @@
 import fs from "fs";
 import path from "path";
+import crypto from "crypto";
 
 /**
- * Append-only export audit trail (JSON Lines).
- * Survives process restarts while the log directory persists; also mirrored to console.
+ * Append-only export audit trail.
+ * Local JSONL is a fast cache; durable history should also be written to MotherDuck.
  */
-export function createAuditLogger({ logDir, fileName = "export-audit.jsonl" }) {
+export function createAuditLogger({
+  logDir,
+  fileName = "export-audit.jsonl",
+  persistEvent = null,
+  loadEvents = null
+}) {
   const resolvedDir = path.resolve(logDir);
   fs.mkdirSync(resolvedDir, { recursive: true });
   const logPath = path.join(resolvedDir, fileName);
 
   function append(event) {
     const entry = {
-      at: new Date().toISOString(),
-      ...event
+      ...event,
+      eventId: event?.eventId || crypto.randomUUID(),
+      at: event?.at || new Date().toISOString()
     };
     const line = `${JSON.stringify(entry)}\n`;
     try {
       fs.appendFileSync(logPath, line, "utf8");
     } catch (error) {
-      console.error("[audit] failed to write log file", error);
+      console.error("[audit] failed to write local log file", error);
     }
     console.info(
       `[audit] ${entry.event} email=${entry.userEmail || "-"} report=${entry.reportType || "-"} job=${entry.jobId || "-"} status=${entry.status || "-"}`
     );
+
+    if (typeof persistEvent === "function") {
+      Promise.resolve()
+        .then(() => persistEvent(entry))
+        .catch((error) => {
+          console.error("[audit] failed to persist event to MotherDuck", error);
+        });
+    }
+
     return entry;
   }
 
-  function readRecent(limit = 200) {
-    const max = Math.min(Math.max(Number(limit) || 200, 1), 5000);
+  function readLocal(limit = 200) {
+    const max = Math.min(Math.max(Number(limit) || 200, 1), 20000);
     if (!fs.existsSync(logPath)) return [];
     const text = fs.readFileSync(logPath, "utf8");
     const lines = text.split(/\r?\n/).filter(Boolean);
@@ -42,6 +58,24 @@ export function createAuditLogger({ logDir, fileName = "export-audit.jsonl" }) {
       }
     }
     return events.reverse();
+  }
+
+  async function readRecent(limit = 200) {
+    const max = Math.min(Math.max(Number(limit) || 200, 1), 20000);
+    if (typeof loadEvents === "function") {
+      try {
+        const remote = await loadEvents(max);
+        if (Array.isArray(remote) && remote.length) {
+          return remote;
+        }
+      } catch (error) {
+        console.error(
+          "[audit] MotherDuck read failed; falling back to local log",
+          error
+        );
+      }
+    }
+    return readLocal(max);
   }
 
   function filterEvents(events, { email, reportType, event } = {}) {
@@ -102,6 +136,7 @@ export function createAuditLogger({ logDir, fileName = "export-audit.jsonl" }) {
   return {
     logPath,
     append,
+    readLocal,
     readRecent,
     filterEvents,
     toCsv
