@@ -1277,3 +1277,57 @@ body {
     transform: rotate(360deg);
   }
 }
+
+body.app-busy {
+  overflow: hidden;
+}
+
+.app-busy-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 10000;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 24px;
+  background: rgba(15, 17, 21, 0.52);
+  backdrop-filter: blur(2px);
+  cursor: wait;
+}
+
+.app-busy-card {
+  width: min(420px, 100%);
+  padding: 28px 24px;
+  border-radius: 16px;
+  background: #ffffff;
+  box-shadow: 0 18px 50px rgba(15, 17, 21, 0.28);
+  text-align: center;
+}
+
+.app-busy-spinner {
+  display: inline-block;
+  width: 28px;
+  height: 28px;
+  border: 3px solid #ead1d1;
+  border-top-color: var(--brand);
+  border-radius: 50%;
+  animation: spin 0.9s linear infinite;
+}
+
+.app-busy-message {
+  margin: 16px 0 8px;
+  font-family: var(--font);
+  font-size: 16px;
+  font-weight: 600;
+  color: #0f1115;
+  line-height: 1.35;
+}
+
+.app-busy-hint {
+  margin: 0;
+  font-family: var(--font);
+  font-size: 13px;
+  font-weight: 500;
+  color: #667085;
+  line-height: 1.4;
+}

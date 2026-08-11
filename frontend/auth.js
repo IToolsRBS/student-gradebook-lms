@@ -7,7 +7,7 @@ const SCOPES = ["openid", "profile", "email", "User.Read"];
 
 /** Default: full access to every report. */
 export const ROLE_FULL = "full";
-/** Restricted: Full Gradebook Export only. */
+/** Restricted: Full Gradebook Export + Intake Summary only. */
 export const ROLE_GRADEBOOK = "gradebook";
 
 export const ALL_FEATURES = [
@@ -26,8 +26,8 @@ const ROLE_DEFINITIONS = {
     homePath: "/"
   },
   [ROLE_GRADEBOOK]: {
-    features: ["gradebook"],
-    homePath: "/gradebook"
+    features: ["all-reports", "gradebook", "intake-summary"],
+    homePath: "/"
   }
 };
 

@@ -171,6 +171,46 @@ export async function readResponseJson(response) {
   }
 }
 
+/** Lock the whole app UI while a report is building / downloading. */
+export function setAppBusy(message = "Building report...") {
+  document.body.classList.add("app-busy");
+  document.body.setAttribute("aria-busy", "true");
+
+  let overlay = document.getElementById("appBusyOverlay");
+  if (!overlay) {
+    overlay = document.createElement("div");
+    overlay.id = "appBusyOverlay";
+    overlay.className = "app-busy-overlay";
+    overlay.setAttribute("role", "alertdialog");
+    overlay.setAttribute("aria-modal", "true");
+    overlay.setAttribute("aria-labelledby", "appBusyMessage");
+    overlay.innerHTML = `
+      <div class="app-busy-card">
+        <span class="app-busy-spinner" aria-hidden="true"></span>
+        <p id="appBusyMessage" class="app-busy-message"></p>
+        <p class="app-busy-hint">Please wait — navigation and filters are locked until the download finishes.</p>
+      </div>
+    `;
+    document.body.appendChild(overlay);
+  }
+
+  updateAppBusy(message);
+}
+
+export function updateAppBusy(message) {
+  const messageEl = document.getElementById("appBusyMessage");
+  if (messageEl) {
+    messageEl.textContent = message || "Building report...";
+  }
+}
+
+export function clearAppBusy() {
+  document.body.classList.remove("app-busy");
+  document.body.removeAttribute("aria-busy");
+  const overlay = document.getElementById("appBusyOverlay");
+  if (overlay) overlay.remove();
+}
+
 /**
  * Poll an export job until done/failed. Retries transient parse/network errors
  * (common when Render restarts under memory pressure mid-export).

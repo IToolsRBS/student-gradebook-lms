@@ -1,4 +1,4 @@
-import { loadSignedInUser, startClock, readResponseJson, pollExportJob } from "./shared.js";
+import { loadSignedInUser, startClock, readResponseJson, pollExportJob, setAppBusy, updateAppBusy, clearAppBusy } from "./shared.js";
 
 const exportBtn = document.getElementById("exportBtn");
 const exportStatusEl = document.getElementById("exportStatus");
@@ -575,6 +575,11 @@ exportBtn?.addEventListener("click", async () => {
   let elapsedTicker = null;
   exportBtn.disabled = true;
   exportBtn.textContent = "Starting...";
+  setAppBusy(
+    programmeCodes.length === 1
+      ? "Starting export job..."
+      : `Starting batch export for ${programmeCodes.length} programmes...`
+  );
   if (exportStatusEl) {
     exportStatusEl.textContent =
       programmeCodes.length === 1
@@ -610,6 +615,7 @@ exportBtn?.addEventListener("click", async () => {
     const latestJob = await pollExportJob(jobId, {
       onUpdate: (job) => {
         const stageText = job?.message || `Working: ${job?.stage || "processing"}`;
+        updateAppBusy(stageText);
         setProgressUi({
           visible: true,
           stage: job?.stage || "queued",
@@ -623,6 +629,7 @@ exportBtn?.addEventListener("click", async () => {
     });
 
     exportBtn.textContent = "Downloading...";
+    updateAppBusy("Downloading Excel...");
     if (exportStatusEl) exportStatusEl.textContent = "Downloading Excel...";
     const downloadResponse = await fetch(
       `/api/export-excel/jobs/${encodeURIComponent(jobId)}/download`,
@@ -679,6 +686,7 @@ exportBtn?.addEventListener("click", async () => {
     });
   } finally {
     if (elapsedTicker) clearInterval(elapsedTicker);
+    clearAppBusy();
     exportBtn.disabled = false;
     exportBtn.textContent = originalText;
     setTimeout(() => {

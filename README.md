@@ -33,6 +33,6 @@ Auth is **required** when `NODE_ENV=production`. Register an app in [Microsoft E
    - `SESSION_SECRET` (random 32+ character string)
    - `AZURE_ALLOWED_EMAILS` — comma-separated allowlist, e.g. `you@regent.ac.za,colleague@regent.ac.za`
    - `AZURE_ALLOWED_DOMAIN=regent.ac.za` (optional fallback when no allowlist is set)
-   - `APP_ROLE_GRADEBOOK_ONLY_EMAILS` — optional comma-separated emails that only see **Full Gradebook Export** (nav, landing, and other report APIs are blocked). Everyone else keeps full access.
+   - `APP_ROLE_GRADEBOOK_ONLY_EMAILS` — optional comma-separated emails limited to **Full Gradebook Export** and **Intake Summary** (other reports stay hidden and their APIs are blocked). Everyone else keeps full access.
 
 `BASE_URL` is optional on Render — `RENDER_EXTERNAL_URL` is used automatically.
