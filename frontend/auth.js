@@ -1,7 +1,10 @@
 import crypto from "crypto";
 import express from "express";
 import session from "express-session";
+import createMemoryStore from "memorystore";
 import * as msal from "@azure/msal-node";
+
+const MemoryStore = createMemoryStore(session);
 
 const SCOPES = ["openid", "profile", "email", "User.Read"];
 
@@ -207,16 +210,21 @@ export function createSessionMiddleware(config) {
   const secureCookie =
     isTruthy(process.env.SESSION_COOKIE_SECURE) ||
     process.env.NODE_ENV === "production";
+  const maxAge = Number(process.env.SESSION_MAX_AGE_MS || 1000 * 60 * 60 * 8);
   return session({
     name: "gradebook.sid",
     secret: config.sessionSecret,
     resave: false,
     saveUninitialized: false,
+    store: new MemoryStore({
+      // Prune expired sessions so memory does not grow unbounded.
+      checkPeriod: Math.min(maxAge, 1000 * 60 * 60)
+    }),
     cookie: {
       httpOnly: true,
       secure: secureCookie,
       sameSite: "lax",
-      maxAge: Number(process.env.SESSION_MAX_AGE_MS || 1000 * 60 * 60 * 8)
+      maxAge
     }
   });
 }

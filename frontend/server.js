@@ -260,6 +260,17 @@ async function persistAuditEventToWarehouse(entry) {
   if (result.code !== 0) {
     throw new Error(result.output || "audit_warehouse append failed");
   }
+  const lines = String(result.output || "")
+    .split(/\r?\n/)
+    .map((line) => line.trim())
+    .filter(Boolean);
+  const jsonLine = lines.reverse().find((line) => line.startsWith("{"));
+  if (jsonLine) {
+    const payload = JSON.parse(jsonLine);
+    if (payload?.ok === false) {
+      throw new Error(payload.error || "audit_warehouse append failed");
+    }
+  }
 }
 
 async function loadAuditEventsFromWarehouse(limit) {
@@ -274,12 +285,18 @@ async function loadAuditEventsFromWarehouse(limit) {
   if (result.code !== 0) {
     throw new Error(result.output || "audit_warehouse list failed");
   }
-  const lines = result.output
+  const lines = String(result.output || "")
     .split(/\r?\n/)
     .map((line) => line.trim())
     .filter(Boolean);
-  const jsonLine = lines[lines.length - 1];
+  const jsonLine = [...lines].reverse().find((line) => line.startsWith("{"));
+  if (!jsonLine) {
+    throw new Error("audit_warehouse list returned no JSON payload");
+  }
   const payload = JSON.parse(jsonLine);
+  if (payload?.ok === false) {
+    throw new Error(payload.error || "audit_warehouse list failed");
+  }
   return Array.isArray(payload?.events) ? payload.events : [];
 }
 
@@ -289,6 +306,24 @@ const auditLogger = createAuditLogger({
   loadEvents: motherduckToken ? loadAuditEventsFromWarehouse : null
 });
 
+async function ensureAuditWarehouse() {
+  if (!motherduckToken) return { ok: false, reason: "no-token" };
+  const scriptPath = path.join(projectRoot, "audit_warehouse.py");
+  if (!fs.existsSync(scriptPath)) {
+    throw new Error(`Missing ${scriptPath} in container image`);
+  }
+  const result = await runProcess(
+    pythonBin,
+    ["audit_warehouse.py", "ensure"],
+    projectRoot,
+    motherduckEnv(),
+    { logPrefix: "[audit-warehouse]" }
+  );
+  if (result.code !== 0) {
+    throw new Error(result.output || "audit_warehouse ensure failed");
+  }
+  return { ok: true };
+}
 async function runWarehouseList(command, extraArgs = []) {
   const result = await runProcess(
     pythonBin,
@@ -376,9 +411,9 @@ function auditFiltersFromJob(job) {
   return Object.keys(filters).length ? filters : null;
 }
 
-function writeExportAudit(event, job, extra = {}) {
+async function writeExportAudit(event, job, extra = {}) {
   const user = job?.requestedBy || {};
-  auditLogger.append({
+  const entry = auditLogger.append({
     event,
     jobId: job?.jobId || null,
     reportType: job?.reportType || "gradebook",
@@ -392,6 +427,17 @@ function writeExportAudit(event, job, extra = {}) {
     timingsMs: job?.timingsMs || null,
     ...extra
   });
+  if (entry?.persistPromise) {
+    try {
+      await entry.persistPromise;
+    } catch (error) {
+      console.error(
+        `[audit] durable write failed for ${event}/${job?.jobId || "?"}:`,
+        error
+      );
+    }
+  }
+  return entry;
 }
 
 function registerExportJob(req, job) {
@@ -402,7 +448,11 @@ function registerExportJob(req, job) {
     reportType: job.reportType || "gradebook"
   };
   exportJobs.set(job.jobId, fullJob);
-  writeExportAudit("export_started", fullJob, { status: "queued" });
+  writeExportAudit("export_started", fullJob, { status: "queued" }).catch(
+    (error) => {
+      console.error("[audit] export_started write failed", error);
+    }
+  );
   return fullJob;
 }
 
@@ -420,7 +470,9 @@ function updateJob(jobId, patch) {
       patch.status === "done" ? "export_completed" : "export_failed",
       next,
       { status: patch.status }
-    );
+    ).catch((error) => {
+      console.error("[audit] terminal export write failed", error);
+    });
   }
 }
 
@@ -1785,7 +1837,7 @@ app.get("/api/export-excel/jobs/:jobId/download", async (req, res) => {
   try {
     await waitForReadableFile(job.filePath);
     const downloader = getRequestUser(req);
-    writeExportAudit("export_downloaded", job, {
+    await writeExportAudit("export_downloaded", job, {
       status: "downloaded",
       userEmail: downloader.email,
       userName: downloader.name,
@@ -1840,9 +1892,11 @@ app.listen(port, host, () => {
   console.log(`Python runtime: ${pythonBin}`);
   if (loadedEnvFiles.length) {
     console.log(`Env file(s): ${loadedEnvFiles.join(", ")}`);
+  } else if (motherduckToken) {
+    console.log("No .env file found — using environment variables (Render/host).");
   } else {
     console.warn(
-      `No .env found. Create ${path.join(projectRoot, ".env")} with MOTHERDUCK_TOKEN=...`
+      `No .env found and MOTHERDUCK_TOKEN is unset. Create ${path.join(projectRoot, ".env")} or set MOTHERDUCK_TOKEN in the host environment.`
     );
   }
   if (!motherduckToken) {
@@ -1864,8 +1918,18 @@ app.listen(port, host, () => {
   console.log(`Export audit log: ${auditLogger.logPath}`);
   if (motherduckToken) {
     console.log(
-      "Export audit durable store: MotherDuck grab_app.export_audit"
+      "Export audit durable store: MotherDuck grab_app.export_audit_log"
     );
+    ensureAuditWarehouse()
+      .then(() => {
+        console.log("Export audit warehouse table ready");
+      })
+      .catch((error) => {
+        console.error(
+          "Export audit warehouse setup failed — history may not persist across redeploys:",
+          error
+        );
+      });
   } else {
     console.warn(
       "Export audit durable store unavailable — set MOTHERDUCK_TOKEN to keep history across redeploys."

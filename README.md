@@ -41,11 +41,13 @@ Auth is **required** when `NODE_ENV=production`. Register an app in [Microsoft E
 Every export is recorded against the signed-in Microsoft email:
 
 - Events: `export_started`, `export_completed`, `export_failed`, `export_downloaded`
-- **Durable store:** MotherDuck table `grab_app.export_audit` (created automatically). This survives Render redeploys.
+- **Durable store:** MotherDuck table `grab_app.export_audit_log` (created automatically). This survives Render redeploys.
 - Local JSONL under `AUDIT_LOG_DIR` is only a short-lived cache (`/tmp` is wiped on redeploy).
 - Also emitted to server logs as `[audit] ...`
 - **Admins only:** browse the log at `/audit-log` (table + filters) and download Excel-compatible CSV via **Export to Excel**
 
-Optional overrides: `AUDIT_WAREHOUSE_SCHEMA` (default `grab_app`), `AUDIT_WAREHOUSE_TABLE` (default `export_audit`).
+Optional overrides: `AUDIT_WAREHOUSE_SCHEMA` (default `grab_app`), `AUDIT_WAREHOUSE_TABLE` (default `export_audit_log`).
+
+> Note: `audit_warehouse.py` must be included in the Docker image (it is listed in the Dockerfile). Without it, Render falls back to `/tmp` and redeploys wipe the log.
 
 `BASE_URL` is optional on Render — `RENDER_EXTERNAL_URL` is used automatically.

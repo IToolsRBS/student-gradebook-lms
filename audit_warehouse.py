@@ -2,7 +2,7 @@
 Durable GRAB export audit trail in MotherDuck.
 
 Local JSONL on Render lives under /tmp and is wiped on redeploy.
-This module appends every event to grab_app.export_audit so history is permanent.
+This module appends every event to grab_app.export_audit_log so history is permanent.
 """
 
 from __future__ import annotations
@@ -15,7 +15,7 @@ from datetime import datetime, timezone
 from motherduck_client import connect_motherduck, read_env_value
 
 DEFAULT_SCHEMA = "grab_app"
-DEFAULT_TABLE = "export_audit"
+DEFAULT_TABLE = "export_audit_log"
 
 
 def audit_schema() -> str:
@@ -27,13 +27,16 @@ def audit_table() -> str:
 
 
 def qualified_table() -> str:
-    return f"{audit_schema()}.{audit_table()}"
+    schema = audit_schema().replace('"', "")
+    table = audit_table().replace('"', "")
+    return f'"{schema}"."{table}"'
 
 
 def ensure_table(conn) -> None:
-    schema = audit_schema()
+    schema = audit_schema().replace('"', "")
     table = qualified_table()
     conn.execute(f'CREATE SCHEMA IF NOT EXISTS "{schema}"')
+    # Use VARCHAR for JSON payloads to avoid MotherDuck JSON-type insert quirks.
     conn.execute(
         f"""
         CREATE TABLE IF NOT EXISTS {table} (
@@ -46,10 +49,10 @@ def ensure_table(conn) -> None:
           user_email VARCHAR,
           user_name VARCHAR,
           user_role VARCHAR,
-          filters JSON,
+          filters VARCHAR,
           file_name VARCHAR,
           error VARCHAR,
-          timings_ms JSON
+          timings_ms VARCHAR
         )
         """
     )
@@ -59,11 +62,11 @@ def _iso_now() -> str:
     return datetime.now(timezone.utc).isoformat()
 
 
-def _as_json(value):
+def _as_text(value):
     if value is None:
         return None
-    if isinstance(value, (dict, list)):
-        return json.dumps(value, ensure_ascii=False)
+    if isinstance(value, str):
+        return value
     return json.dumps(value, ensure_ascii=False)
 
 
@@ -75,6 +78,7 @@ def append_event(payload: dict) -> dict:
         or entry.get("event_id")
         or f"{entry['at']}:{entry.get('jobId') or entry.get('job_id') or 'none'}:{entry.get('event') or 'event'}"
     )
+    at_value = entry.get("at")
     conn = connect_motherduck()
     try:
         ensure_table(conn)
@@ -84,11 +88,13 @@ def append_event(payload: dict) -> dict:
             INSERT OR REPLACE INTO {table} (
               event_id, at, event, job_id, report_type, status,
               user_email, user_name, user_role, filters, file_name, error, timings_ms
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            ) VALUES (
+              ?, CAST(? AS TIMESTAMPTZ), ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?
+            )
             """,
             [
                 str(event_id),
-                entry.get("at"),
+                str(at_value),
                 entry.get("event"),
                 entry.get("jobId") or entry.get("job_id"),
                 entry.get("reportType") or entry.get("report_type"),
@@ -96,10 +102,10 @@ def append_event(payload: dict) -> dict:
                 entry.get("userEmail") or entry.get("user_email"),
                 entry.get("userName") or entry.get("user_name"),
                 entry.get("userRole") or entry.get("user_role"),
-                _as_json(entry.get("filters")),
+                _as_text(entry.get("filters")),
                 entry.get("fileName") or entry.get("file_name"),
                 entry.get("error"),
-                _as_json(entry.get("timingsMs") or entry.get("timings_ms")),
+                _as_text(entry.get("timingsMs") or entry.get("timings_ms")),
             ],
         )
     finally:
@@ -163,7 +169,7 @@ def list_events(limit: int = 1000) -> list[dict]:
             events.append(
                 {
                     "eventId": raw["event_id"],
-                    "at": at_value,
+                    "at": str(at_value) if at_value is not None else None,
                     "event": raw["event"],
                     "jobId": raw["job_id"],
                     "reportType": raw["report_type"],
@@ -183,6 +189,12 @@ def list_events(limit: int = 1000) -> list[dict]:
         conn.close()
 
 
+def _print_json(payload) -> None:
+    sys.stdout.write(json.dumps(payload, ensure_ascii=False))
+    sys.stdout.write("\n")
+    sys.stdout.flush()
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description="GRAB export audit warehouse store")
     sub = parser.add_subparsers(dest="command", required=True)
@@ -200,31 +212,36 @@ def main(argv: list[str] | None = None) -> int:
 
     args = parser.parse_args(argv)
 
-    if args.command == "ensure":
-        conn = connect_motherduck()
-        try:
-            ensure_table(conn)
-        finally:
-            conn.close()
-        print(json.dumps({"ok": True, "table": qualified_table()}))
-        return 0
+    try:
+        if args.command == "ensure":
+            conn = connect_motherduck()
+            try:
+                ensure_table(conn)
+            finally:
+                conn.close()
+            _print_json({"ok": True, "table": qualified_table()})
+            return 0
 
-    if args.command == "append":
-        raw = args.payload
-        if not raw:
-            raw = sys.stdin.read()
-        payload = json.loads(raw or "{}")
-        entry = append_event(payload)
-        print(json.dumps(entry, ensure_ascii=False))
-        return 0
+        if args.command == "append":
+            raw = args.payload
+            if not raw:
+                raw = sys.stdin.read()
+            payload = json.loads(raw or "{}")
+            entry = append_event(payload)
+            _print_json(entry)
+            return 0
 
-    if args.command == "list":
-        events = list_events(args.limit)
-        print(json.dumps({"ok": True, "count": len(events), "events": events}, ensure_ascii=False))
-        return 0
+        if args.command == "list":
+            events = list_events(args.limit)
+            _print_json({"ok": True, "count": len(events), "events": events})
+            return 0
 
-    parser.error(f"Unknown command: {args.command}")
-    return 2
+        parser.error(f"Unknown command: {args.command}")
+        return 2
+    except Exception as exc:
+        print(f"audit_warehouse error: {exc}", file=sys.stderr)
+        _print_json({"ok": False, "error": str(exc)})
+        return 1
 
 
 if __name__ == "__main__":

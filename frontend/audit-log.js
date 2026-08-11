@@ -32,13 +32,19 @@ export function createAuditLogger({
       `[audit] ${entry.event} email=${entry.userEmail || "-"} report=${entry.reportType || "-"} job=${entry.jobId || "-"} status=${entry.status || "-"}`
     );
 
-    if (typeof persistEvent === "function") {
-      Promise.resolve()
-        .then(() => persistEvent(entry))
-        .catch((error) => {
-          console.error("[audit] failed to persist event to MotherDuck", error);
-        });
-    }
+    const persistPromise =
+      typeof persistEvent === "function"
+        ? Promise.resolve()
+            .then(() => persistEvent(entry))
+            .then(() => {
+              entry.persisted = "motherduck";
+              return entry;
+            })
+        : Promise.resolve(entry);
+    entry.persistPromise = persistPromise;
+    persistPromise.catch((error) => {
+      console.error("[audit] failed to persist event to MotherDuck", error);
+    });
 
     return entry;
   }
@@ -60,13 +66,28 @@ export function createAuditLogger({
     return events.reverse();
   }
 
+  function mergeEvents(remoteEvents, localEvents, limit) {
+    const byId = new Map();
+    for (const event of [...localEvents, ...remoteEvents]) {
+      const key =
+        event?.eventId ||
+        `${event?.at || ""}:${event?.jobId || ""}:${event?.event || ""}`;
+      if (!key) continue;
+      if (!byId.has(key)) byId.set(key, event);
+    }
+    return [...byId.values()]
+      .sort((a, b) => String(b.at || "").localeCompare(String(a.at || "")))
+      .slice(0, limit);
+  }
+
   async function readRecent(limit = 200) {
     const max = Math.min(Math.max(Number(limit) || 200, 1), 20000);
+    const local = readLocal(max);
     if (typeof loadEvents === "function") {
       try {
         const remote = await loadEvents(max);
-        if (Array.isArray(remote) && remote.length) {
-          return remote;
+        if (Array.isArray(remote)) {
+          return mergeEvents(remote, local, max);
         }
       } catch (error) {
         console.error(
@@ -75,7 +96,7 @@ export function createAuditLogger({
         );
       }
     }
-    return readLocal(max);
+    return local;
   }
 
   function filterEvents(events, { email, reportType, event } = {}) {

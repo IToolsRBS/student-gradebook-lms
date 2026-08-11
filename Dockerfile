@@ -31,6 +31,7 @@ COPY motherduck_client.py \
   warehouse_list.py \
   warehouse_metadata.py \
   warehouse_export_fallback.py \
+  audit_warehouse.py \
   populate_gradebook_from_warehouse.py \
   populate_activity_completion.py \
   populate_missed_submissions.py \
