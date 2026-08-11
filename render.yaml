@@ -40,5 +40,7 @@ services:
         value: regent.ac.za
       - key: AZURE_ALLOWED_EMAILS
         value: kameel.maharaj@regent.ac.za,zaheera.ganie@regent.ac.za
+      - key: APP_ROLE_GRADEBOOK_ONLY_EMAILS
+        sync: false
       - key: AZURE_AUTH_ENABLED
         value: "true"

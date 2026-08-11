@@ -6,7 +6,7 @@
     <title>Report Exports | Regent Business School</title>
     <link rel="stylesheet" href="/styles.css" />
   </head>
-  <body class="landing-page">
+  <body class="landing-page" data-feature="all-reports">
     <div class="page-shell">
       <header class="site-header">
         <a class="brand" href="/" aria-label="Report Exports home">
@@ -17,13 +17,13 @@
           </span>
         </a>
         <nav class="site-nav" aria-label="Primary">
-          <a class="nav-pill is-active" href="/" aria-current="page">All Reports</a>
-          <a class="nav-pill" href="/gradebook">Gradebook</a>
-          <a class="nav-pill" href="/intake-summary">Intake Summary</a>
-          <a class="nav-pill" href="/activity-completion">Activity Completion</a>
-          <a class="nav-pill" href="/inactivity-report">Inactivity</a>
-          <a class="nav-pill" href="/missed-submission">Missed Submissions</a>
-          <a class="nav-pill" href="/late-submission">Late Submissions</a>
+          <a class="nav-pill is-active" href="/" aria-current="page" data-feature="all-reports">All Reports</a>
+          <a class="nav-pill" href="/gradebook" data-feature="gradebook">Gradebook</a>
+          <a class="nav-pill" href="/intake-summary" data-feature="intake-summary">Intake Summary</a>
+          <a class="nav-pill" href="/activity-completion" data-feature="activity-completion">Activity Completion</a>
+          <a class="nav-pill" href="/inactivity-report" data-feature="inactivity-report">Inactivity</a>
+          <a class="nav-pill" href="/missed-submission" data-feature="missed-submission">Missed Submissions</a>
+          <a class="nav-pill" href="/late-submission" data-feature="late-submission">Late Submissions</a>
         </nav>
         <div class="top-bar-actions">
           <div class="user-bar" id="userBar" hidden>
@@ -63,7 +63,7 @@
           </div>
 
           <div class="report-board-grid">
-            <a class="report-cell report-cell-featured" href="/gradebook">
+            <a class="report-cell report-cell-featured" href="/gradebook" data-feature="gradebook">
               <div class="report-meta">
                 <span class="report-icon" aria-hidden="true">
                   <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
@@ -82,7 +82,7 @@
               <span class="report-cta">Open report</span>
             </a>
 
-            <a class="report-cell" href="/intake-summary">
+            <a class="report-cell" href="/intake-summary" data-feature="intake-summary">
               <div class="report-meta">
                 <span class="report-icon" aria-hidden="true">
                   <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
@@ -99,7 +99,7 @@
               <span class="report-cta">Open report</span>
             </a>
 
-            <a class="report-cell" href="/activity-completion">
+            <a class="report-cell" href="/activity-completion" data-feature="activity-completion">
               <div class="report-meta">
                 <span class="report-icon" aria-hidden="true">
                   <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
@@ -114,7 +114,7 @@
               <span class="report-cta">Open report</span>
             </a>
 
-            <a class="report-cell" href="/inactivity-report">
+            <a class="report-cell" href="/inactivity-report" data-feature="inactivity-report">
               <div class="report-meta">
                 <span class="report-icon" aria-hidden="true">
                   <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
@@ -131,7 +131,7 @@
               <span class="report-cta">Open report</span>
             </a>
 
-            <a class="report-cell" href="/missed-submission">
+            <a class="report-cell" href="/missed-submission" data-feature="missed-submission">
               <div class="report-meta">
                 <span class="report-icon" aria-hidden="true">
                   <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
@@ -147,7 +147,7 @@
               <span class="report-cta">Open report</span>
             </a>
 
-            <a class="report-cell report-cell-wide" href="/late-submission">
+            <a class="report-cell report-cell-wide" href="/late-submission" data-feature="late-submission">
               <div class="report-meta">
                 <span class="report-icon" aria-hidden="true">
                   <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">

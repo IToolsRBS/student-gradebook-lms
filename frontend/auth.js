@@ -5,6 +5,59 @@ import * as msal from "@azure/msal-node";
 
 const SCOPES = ["openid", "profile", "email", "User.Read"];
 
+/** Default: full access to every report. */
+export const ROLE_FULL = "full";
+/** Restricted: Full Gradebook Export only. */
+export const ROLE_GRADEBOOK = "gradebook";
+
+export const ALL_FEATURES = [
+  "all-reports",
+  "gradebook",
+  "intake-summary",
+  "activity-completion",
+  "inactivity-report",
+  "missed-submission",
+  "late-submission"
+];
+
+const ROLE_DEFINITIONS = {
+  [ROLE_FULL]: {
+    features: ALL_FEATURES,
+    homePath: "/"
+  },
+  [ROLE_GRADEBOOK]: {
+    features: ["gradebook"],
+    homePath: "/gradebook"
+  }
+};
+
+/** Page path → feature key (used for UI + page gating). */
+export const PATH_FEATURES = {
+  "/": "all-reports",
+  "/gradebook": "gradebook",
+  "/gradebook.html": "gradebook",
+  "/intake-summary": "intake-summary",
+  "/intake-summary.html": "intake-summary",
+  "/activity-completion": "activity-completion",
+  "/activity-completion.html": "activity-completion",
+  "/inactivity-report": "inactivity-report",
+  "/inactivity-report.html": "inactivity-report",
+  "/missed-submission": "missed-submission",
+  "/missed-submission.html": "missed-submission",
+  "/late-submission": "late-submission",
+  "/late-submission.html": "late-submission"
+};
+
+/** API path prefix → required feature (shared metadata APIs stay open to any signed-in role). */
+export const API_FEATURES = {
+  "/api/export-excel/start": "gradebook",
+  "/api/export-intake-summary/start": "intake-summary",
+  "/api/export-activity-completion/start": "activity-completion",
+  "/api/export-inactivity-report/start": "inactivity-report",
+  "/api/export-missed-submissions/start": "missed-submission",
+  "/api/export-late-submissions/start": "late-submission"
+};
+
 function isTruthy(value) {
   const normalized = String(value || "")
     .trim()
@@ -23,8 +76,15 @@ export function resolveAuthConfig(readEnvValue) {
       ? isTruthy(explicitEnabled)
       : process.env.NODE_ENV === "production" || Boolean(clientId);
 
+  const gradebookOnlyEmails = parseAllowedEmails(
+    readEnvValue(["APP_ROLE_GRADEBOOK_ONLY_EMAILS"])
+  );
+
   if (!enabledFlag) {
-    return { enabled: false };
+    return {
+      enabled: false,
+      gradebookOnlyEmails
+    };
   }
 
   const missing = [];
@@ -58,8 +118,41 @@ export function resolveAuthConfig(readEnvValue) {
     postLogoutRedirectUri: baseUrl,
     allowedDomain,
     allowedEmails,
-    authPrompt
+    authPrompt,
+    gradebookOnlyEmails
   };
+}
+
+export function resolveUserRole(email, config) {
+  const normalized = String(email || "").trim().toLowerCase();
+  if (
+    normalized &&
+    config?.gradebookOnlyEmails instanceof Set &&
+    config.gradebookOnlyEmails.has(normalized)
+  ) {
+    return ROLE_GRADEBOOK;
+  }
+  return ROLE_FULL;
+}
+
+export function getRoleDefinition(role) {
+  return ROLE_DEFINITIONS[role] || ROLE_DEFINITIONS[ROLE_FULL];
+}
+
+export function getAccessForEmail(email, config) {
+  const role = resolveUserRole(email, config);
+  const definition = getRoleDefinition(role);
+  return {
+    role,
+    features: definition.features,
+    homePath: definition.homePath
+  };
+}
+
+export function userHasFeature(email, feature, config) {
+  if (!config?.enabled) return true;
+  const { features } = getAccessForEmail(email, config);
+  return features.includes(feature);
 }
 
 export function resolveBaseUrl(readEnvValue) {
@@ -113,6 +206,21 @@ function isPublicPath(pathname) {
   );
 }
 
+function denyAccess(req, res, message) {
+  if (req.path.startsWith("/api/")) {
+    return res.status(403).json({ error: message });
+  }
+  return res.status(403).send(message);
+}
+
+function featureForRequest(req) {
+  const pathname = String(req.path || "").replace(/\/$/, "") || "/";
+  if (API_FEATURES[pathname]) return API_FEATURES[pathname];
+  if (PATH_FEATURES[pathname]) return PATH_FEATURES[pathname];
+  if (PATH_FEATURES[req.path]) return PATH_FEATURES[req.path];
+  return null;
+}
+
 export function createRequireAuth(config) {
   return function requireAuth(req, res, next) {
     if (!config?.enabled) return next();
@@ -121,15 +229,27 @@ export function createRequireAuth(config) {
     if (req.session?.account) {
       if (!emailAllowed(req.session.account.email, config)) {
         req.session.destroy(() => {});
+        return denyAccess(
+          req,
+          res,
+          "Your account is not allowed to access this application."
+        );
+      }
+
+      const access = getAccessForEmail(req.session.account.email, config);
+      req.access = access;
+      req.session.account.role = access.role;
+
+      const feature = featureForRequest(req);
+      if (feature && !access.features.includes(feature)) {
         if (req.path.startsWith("/api/")) {
           return res.status(403).json({
-            error: "Your account is not allowed to access this application."
+            error: "Your account is not allowed to use this report."
           });
         }
-        return res
-          .status(403)
-          .send("Your account is not allowed to access this application.");
+        return res.redirect(access.homePath || "/gradebook");
       }
+
       return next();
     }
 
@@ -241,14 +361,21 @@ export function createAuthRouter(config) {
       }
 
       const email = accountEmail(tokenResponse.account);
+      const access = getAccessForEmail(email, config);
       req.session.account = {
         name: tokenResponse.account.name || "",
         email,
-        oid: tokenResponse.account.localAccountId || ""
+        oid: tokenResponse.account.localAccountId || "",
+        role: access.role
       };
       delete req.session.auth;
 
-      res.redirect(authRequest.returnTo || "/");
+      const returnTo = authRequest.returnTo || "/";
+      const returnFeature = PATH_FEATURES[returnTo.replace(/\/$/, "") || "/"];
+      if (returnFeature && !access.features.includes(returnFeature)) {
+        return res.redirect(access.homePath);
+      }
+      res.redirect(returnTo === "/" ? access.homePath : returnTo);
     } catch (error) {
       console.error("[auth/callback]", error);
       res.status(500).send("Microsoft sign-in failed. Please try again.");
@@ -272,9 +399,16 @@ export function createAuthRouter(config) {
     if (!req.session?.account) {
       return res.status(401).json({ authenticated: false });
     }
+    const access = getAccessForEmail(req.session.account.email, config);
     res.json({
       authenticated: true,
-      user: req.session.account
+      user: {
+        ...req.session.account,
+        role: access.role
+      },
+      role: access.role,
+      features: access.features,
+      homePath: access.homePath
     });
   });
 

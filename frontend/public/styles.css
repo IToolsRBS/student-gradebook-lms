@@ -185,6 +185,11 @@ body {
   background: var(--ink);
 }
 
+.site-nav [hidden],
+.report-board [hidden] {
+  display: none !important;
+}
+
 .top-bar-actions {
   display: flex;
   align-items: center;

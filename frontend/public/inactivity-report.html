@@ -6,7 +6,7 @@
     <title>Inactivity Report | Regent Business School</title>
     <link rel="stylesheet" href="/styles.css" />
   </head>
-  <body>
+  <body data-feature="inactivity-report">
     <div class="page-shell">
       <header class="site-header">
         <a class="brand" href="/" aria-label="Report Exports home">
@@ -17,18 +17,19 @@
           </span>
         </a>
         <nav class="site-nav" aria-label="Primary">
-          <a class="nav-pill" href="/">All Reports</a>
-          <a class="nav-pill" href="/gradebook">Gradebook</a>
-          <a class="nav-pill" href="/intake-summary">Intake Summary</a>
-          <a class="nav-pill" href="/activity-completion">Activity Completion</a>
+          <a class="nav-pill" href="/" data-feature="all-reports">All Reports</a>
+          <a class="nav-pill" href="/gradebook" data-feature="gradebook">Gradebook</a>
+          <a class="nav-pill" href="/intake-summary" data-feature="intake-summary">Intake Summary</a>
+          <a class="nav-pill" href="/activity-completion" data-feature="activity-completion">Activity Completion</a>
           <a
             class="nav-pill is-active"
             href="/inactivity-report"
             aria-current="page"
+            data-feature="inactivity-report"
             >Inactivity</a
           >
-          <a class="nav-pill" href="/missed-submission">Missed Submissions</a>
-          <a class="nav-pill" href="/late-submission">Late Submissions</a>
+          <a class="nav-pill" href="/missed-submission" data-feature="missed-submission">Missed Submissions</a>
+          <a class="nav-pill" href="/late-submission" data-feature="late-submission">Late Submissions</a>
         </nav>
         <div class="top-bar-actions">
           <div class="user-bar" id="userBar" hidden>

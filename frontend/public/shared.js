@@ -91,19 +91,60 @@ export function startClock() {
 export async function loadSignedInUser() {
   const userBar = document.getElementById("userBar");
   const userNameEl = document.getElementById("userName");
-  if (!userBar || !userNameEl) return;
 
   try {
     const response = await fetch("/auth/me", { credentials: "same-origin" });
-    if (!response.ok) return;
+    if (!response.ok) return null;
     const payload = await response.json();
-    if (!payload?.authenticated || !payload?.user) return;
-    const label = payload.user.name || payload.user.email || "Signed in";
-    userNameEl.textContent = label;
-    userBar.hidden = false;
+    if (!payload?.authenticated || !payload?.user) return null;
+
+    if (userBar && userNameEl) {
+      const label = payload.user.name || payload.user.email || "Signed in";
+      userNameEl.textContent = label;
+      userBar.hidden = false;
+    }
+
+    applyFeatureAccess(payload);
     fitSiteHeader();
+    return payload;
   } catch {
     // Auth may be disabled in local development.
+    return null;
+  }
+}
+
+/**
+ * Hide nav/report links the signed-in role cannot use, and send restricted
+ * users to their home report when they open a forbidden page.
+ */
+export function applyFeatureAccess(payload) {
+  const features = Array.isArray(payload?.features) ? payload.features : null;
+  if (!features) return;
+
+  const allowed = new Set(features);
+  const homePath = payload.homePath || "/";
+
+  document.querySelectorAll("[data-feature]").forEach((el) => {
+    const feature = el.getAttribute("data-feature");
+    if (!feature) return;
+    const permitted = allowed.has(feature);
+    el.hidden = !permitted;
+    el.setAttribute("aria-hidden", permitted ? "false" : "true");
+    if (!permitted && el.matches("a")) {
+      el.setAttribute("tabindex", "-1");
+    } else if (permitted && el.matches("a")) {
+      el.removeAttribute("tabindex");
+    }
+  });
+
+  const brand = document.querySelector(".brand");
+  if (brand && homePath) {
+    brand.setAttribute("href", homePath);
+  }
+
+  const currentFeature = document.body?.dataset?.feature;
+  if (currentFeature && !allowed.has(currentFeature)) {
+    window.location.replace(homePath);
   }
 }
 
