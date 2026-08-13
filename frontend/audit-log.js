@@ -4,19 +4,27 @@ import crypto from "crypto";
 
 /**
  * Append-only export audit trail.
- * Local JSONL is a fast cache; durable history should also be written to MotherDuck.
+ * Always writes local JSON Lines under EXPORT_OUTPUT_DIR/audit (often /tmp on Render).
+ * When a durable Neon store is configured, also inserts there and prefers it on read.
  */
 export function createAuditLogger({
   logDir,
   fileName = "export-audit.jsonl",
-  persistEvent = null,
-  loadEvents = null
+  durableDb = null
 }) {
   const resolvedDir = path.resolve(logDir);
   fs.mkdirSync(resolvedDir, { recursive: true });
   const logPath = path.join(resolvedDir, fileName);
+  const hasDurable = Boolean(durableDb?.configured);
 
-  function append(event) {
+  function storeLabel(source) {
+    if (source === "neon" && hasDurable) return "neon+local";
+    if (source === "neon") return "neon";
+    if (hasDurable) return "local"; // durable configured but fell back
+    return "local";
+  }
+
+  async function append(event) {
     const entry = {
       ...event,
       eventId: event?.eventId || crypto.randomUUID(),
@@ -26,30 +34,34 @@ export function createAuditLogger({
     try {
       fs.appendFileSync(logPath, line, "utf8");
     } catch (error) {
-      console.error("[audit] failed to write local log file", error);
+      console.error("[audit] failed to write log file", error);
+      throw error;
     }
+
+    if (hasDurable) {
+      try {
+        await durableDb.insertEvent(entry);
+        entry.persisted = "neon";
+      } catch (error) {
+        // Local write already succeeded; keep the request path working.
+        console.error(
+          `[audit] durable Neon insert failed for ${entry.event}/${entry.jobId || "?"}:`,
+          error?.message || error
+        );
+      }
+    } else {
+      console.warn(
+        `[audit] Neon not configured — event ${entry.event} saved to local JSONL only`
+      );
+    }
+
     console.info(
       `[audit] ${entry.event} email=${entry.userEmail || "-"} report=${entry.reportType || "-"} job=${entry.jobId || "-"} status=${entry.status || "-"}`
     );
-
-    const persistPromise =
-      typeof persistEvent === "function"
-        ? Promise.resolve()
-            .then(() => persistEvent(entry))
-            .then(() => {
-              entry.persisted = "motherduck";
-              return entry;
-            })
-        : Promise.resolve(entry);
-    entry.persistPromise = persistPromise;
-    persistPromise.catch((error) => {
-      console.error("[audit] failed to persist event to MotherDuck", error);
-    });
-
     return entry;
   }
 
-  function readLocal(limit = 200) {
+  function readRecentLocal(limit = 200) {
     const max = Math.min(Math.max(Number(limit) || 200, 1), 20000);
     if (!fs.existsSync(logPath)) return [];
     const text = fs.readFileSync(logPath, "utf8");
@@ -64,39 +76,6 @@ export function createAuditLogger({
       }
     }
     return events.reverse();
-  }
-
-  function mergeEvents(remoteEvents, localEvents, limit) {
-    const byId = new Map();
-    for (const event of [...localEvents, ...remoteEvents]) {
-      const key =
-        event?.eventId ||
-        `${event?.at || ""}:${event?.jobId || ""}:${event?.event || ""}`;
-      if (!key) continue;
-      if (!byId.has(key)) byId.set(key, event);
-    }
-    return [...byId.values()]
-      .sort((a, b) => String(b.at || "").localeCompare(String(a.at || "")))
-      .slice(0, limit);
-  }
-
-  async function readRecent(limit = 200) {
-    const max = Math.min(Math.max(Number(limit) || 200, 1), 20000);
-    const local = readLocal(max);
-    if (typeof loadEvents === "function") {
-      try {
-        const remote = await loadEvents(max);
-        if (Array.isArray(remote)) {
-          return mergeEvents(remote, local, max);
-        }
-      } catch (error) {
-        console.error(
-          "[audit] MotherDuck read failed; falling back to local log",
-          error
-        );
-      }
-    }
-    return local;
   }
 
   function filterEvents(events, { email, reportType, event } = {}) {
@@ -118,6 +97,46 @@ export function createAuditLogger({
       if (eventQuery && row.event !== eventQuery) return false;
       return true;
     });
+  }
+
+  /**
+   * Prefer Neon when configured; fall back to local JSONL on failure.
+   * Returns { events, store, durable }.
+   */
+  async function listEvents({ limit = 200, email, reportType, event } = {}) {
+    if (hasDurable) {
+      try {
+        const events = await durableDb.listEvents({
+          limit,
+          email,
+          reportType,
+          event
+        });
+        return {
+          events,
+          store: storeLabel("neon"),
+          durable: true,
+          source: "neon"
+        };
+      } catch (error) {
+        console.error(
+          "[audit] Neon list failed; falling back to local JSONL",
+          error
+        );
+      }
+    }
+
+    const local = filterEvents(readRecentLocal(limit), {
+      email,
+      reportType,
+      event
+    });
+    return {
+      events: local,
+      store: storeLabel("local"),
+      durable: false,
+      source: "local"
+    };
   }
 
   function toCsv(events) {
@@ -150,15 +169,15 @@ export function createAuditLogger({
     for (const row of events) {
       lines.push(headers.map((key) => escapeCell(row[key])).join(","));
     }
-    // UTF-8 BOM helps Excel open special characters correctly.
     return `\uFEFF${lines.join("\r\n")}\r\n`;
   }
 
   return {
     logPath,
+    hasDurable,
     append,
-    readLocal,
-    readRecent,
+    readRecent: readRecentLocal,
+    listEvents,
     filterEvents,
     toCsv
   };

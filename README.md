@@ -41,13 +41,18 @@ Auth is **required** when `NODE_ENV=production`. Register an app in [Microsoft E
 Every export is recorded against the signed-in Microsoft email:
 
 - Events: `export_started`, `export_completed`, `export_failed`, `export_downloaded`
-- **Durable store:** MotherDuck table `grab_app.export_audit_log` (created automatically). This survives Render redeploys.
-- Local JSONL under `AUDIT_LOG_DIR` is only a short-lived cache (`/tmp` is wiped on redeploy).
+- **Durable store (recommended):** Neon Postgres via `AUDIT_DATABASE_URL` or `NEON_DATABASE_URL` (also accepts `DATABASE_URL`). Table `grab_export_audit` is created on startup. History survives Render redeploys.
+- **Local mirror:** append-only JSONL under `AUDIT_LOG_DIR` (defaults to `EXPORT_OUTPUT_DIR/audit`, typically `/tmp` on Render) — wiped on redeploy; used as fallback if Neon is unset or unreachable.
 - Also emitted to server logs as `[audit] ...`
 - **Admins only:** browse the log at `/audit-log` (table + filters) and download Excel-compatible CSV via **Export to Excel**
 
-Optional overrides: `AUDIT_WAREHOUSE_SCHEMA` (default `grab_app`), `AUDIT_WAREHOUSE_TABLE` (default `export_audit_log`).
+#### Neon setup (Render)
 
-> Note: `audit_warehouse.py` must be included in the Docker image (it is listed in the Dockerfile). Without it, Render falls back to `/tmp` and redeploys wipe the log.
+1. In the [Neon Console](https://console.neon.tech) → your project → **Dashboard** → **Connection details**.
+2. Copy the connection string (include SSL; Neon URLs usually end with `?sslmode=require`). For this long-running Express app, either the **direct** or **pooled** connection string is fine.
+3. On Render → your web service → **Environment**, set one of:
+   - `NEON_DATABASE_URL` (matches `render.yaml`), or
+   - `AUDIT_DATABASE_URL` (preferred name in docs)
+4. Redeploy. Logs should show `Audit durable store: Neon Postgres`. The audit table is created automatically — no manual SQL needed.
 
 `BASE_URL` is optional on Render — `RENDER_EXTERNAL_URL` is used automatically.

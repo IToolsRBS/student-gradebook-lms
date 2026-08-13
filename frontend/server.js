@@ -12,6 +12,7 @@ import {
   getAccessForEmail
 } from "./auth.js";
 import { createAuditLogger } from "./audit-log.js";
+import { createAuditDb } from "./audit-db.js";
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -143,6 +144,12 @@ fs.mkdirSync(exportOutputDir, { recursive: true });
 
 const auditLogDir =
   readEnvValue(["AUDIT_LOG_DIR"]) || path.join(exportOutputDir, "audit");
+const auditDatabaseUrl = readEnvValue([
+  "AUDIT_DATABASE_URL",
+  "NEON_DATABASE_URL",
+  "DATABASE_URL"
+]);
+const auditDb = createAuditDb({ connectionString: auditDatabaseUrl });
 
 const pythonBin =
   readEnvValue(["PYTHON_BIN"]) ||
@@ -245,85 +252,11 @@ function runProcess(command, args, cwd, extraEnv = {}, options = {}) {
   });
 }
 
-async function persistAuditEventToWarehouse(entry) {
-  if (!motherduckToken) return;
-  const result = await runProcess(
-    pythonBin,
-    ["audit_warehouse.py", "append"],
-    projectRoot,
-    motherduckEnv(),
-    {
-      stdin: JSON.stringify(entry),
-      logPrefix: "[audit-warehouse]"
-    }
-  );
-  if (result.code !== 0) {
-    throw new Error(result.output || "audit_warehouse append failed");
-  }
-  const lines = String(result.output || "")
-    .split(/\r?\n/)
-    .map((line) => line.trim())
-    .filter(Boolean);
-  const jsonLine = lines.reverse().find((line) => line.startsWith("{"));
-  if (jsonLine) {
-    const payload = JSON.parse(jsonLine);
-    if (payload?.ok === false) {
-      throw new Error(payload.error || "audit_warehouse append failed");
-    }
-  }
-}
-
-async function loadAuditEventsFromWarehouse(limit) {
-  if (!motherduckToken) return [];
-  const result = await runProcess(
-    pythonBin,
-    ["audit_warehouse.py", "list", "--limit", String(limit)],
-    projectRoot,
-    motherduckEnv(),
-    { logPrefix: "[audit-warehouse]" }
-  );
-  if (result.code !== 0) {
-    throw new Error(result.output || "audit_warehouse list failed");
-  }
-  const lines = String(result.output || "")
-    .split(/\r?\n/)
-    .map((line) => line.trim())
-    .filter(Boolean);
-  const jsonLine = [...lines].reverse().find((line) => line.startsWith("{"));
-  if (!jsonLine) {
-    throw new Error("audit_warehouse list returned no JSON payload");
-  }
-  const payload = JSON.parse(jsonLine);
-  if (payload?.ok === false) {
-    throw new Error(payload.error || "audit_warehouse list failed");
-  }
-  return Array.isArray(payload?.events) ? payload.events : [];
-}
-
 const auditLogger = createAuditLogger({
   logDir: auditLogDir,
-  persistEvent: motherduckToken ? persistAuditEventToWarehouse : null,
-  loadEvents: motherduckToken ? loadAuditEventsFromWarehouse : null
+  durableDb: auditDb
 });
 
-async function ensureAuditWarehouse() {
-  if (!motherduckToken) return { ok: false, reason: "no-token" };
-  const scriptPath = path.join(projectRoot, "audit_warehouse.py");
-  if (!fs.existsSync(scriptPath)) {
-    throw new Error(`Missing ${scriptPath} in container image`);
-  }
-  const result = await runProcess(
-    pythonBin,
-    ["audit_warehouse.py", "ensure"],
-    projectRoot,
-    motherduckEnv(),
-    { logPrefix: "[audit-warehouse]" }
-  );
-  if (result.code !== 0) {
-    throw new Error(result.output || "audit_warehouse ensure failed");
-  }
-  return { ok: true };
-}
 async function runWarehouseList(command, extraArgs = []) {
   const result = await runProcess(
     pythonBin,
@@ -411,9 +344,9 @@ function auditFiltersFromJob(job) {
   return Object.keys(filters).length ? filters : null;
 }
 
-async function writeExportAudit(event, job, extra = {}) {
+function writeExportAudit(event, job, extra = {}) {
   const user = job?.requestedBy || {};
-  const entry = auditLogger.append({
+  return auditLogger.append({
     event,
     jobId: job?.jobId || null,
     reportType: job?.reportType || "gradebook",
@@ -427,17 +360,6 @@ async function writeExportAudit(event, job, extra = {}) {
     timingsMs: job?.timingsMs || null,
     ...extra
   });
-  if (entry?.persistPromise) {
-    try {
-      await entry.persistPromise;
-    } catch (error) {
-      console.error(
-        `[audit] durable write failed for ${event}/${job?.jobId || "?"}:`,
-        error
-      );
-    }
-  }
-  return entry;
 }
 
 function registerExportJob(req, job) {
@@ -448,7 +370,7 @@ function registerExportJob(req, job) {
     reportType: job.reportType || "gradebook"
   };
   exportJobs.set(job.jobId, fullJob);
-  writeExportAudit("export_started", fullJob, { status: "queued" }).catch(
+  void writeExportAudit("export_started", fullJob, { status: "queued" }).catch(
     (error) => {
       console.error("[audit] export_started write failed", error);
     }
@@ -466,7 +388,7 @@ function updateJob(jobId, patch) {
     patch.status !== current.status &&
     (patch.status === "done" || patch.status === "failed")
   ) {
-    writeExportAudit(
+    void writeExportAudit(
       patch.status === "done" ? "export_completed" : "export_failed",
       next,
       { status: patch.status }
@@ -601,14 +523,27 @@ app.get(["/audit-log", "/audit-log/", "/audit-log.html"], (_req, res) => {
 app.use(express.static(path.join(__dirname, "public")));
 app.use(express.static(__dirname));
 
-app.get("/api/health", (_req, res) => {
+app.get("/api/health", async (_req, res) => {
+  let neonReady = false;
+  if (auditDb.configured) {
+    try {
+      neonReady = Boolean(await auditDb.ensureReady());
+    } catch {
+      neonReady = false;
+    }
+  }
   res.json({
     ok: true,
     service: "gradebook-export",
     warehouse: Boolean(motherduckToken),
     database: motherduckDatabase,
     dropdownSource: "motherduck",
-    auth: authConfig.enabled ? "microsoft" : "disabled"
+    auth: authConfig.enabled ? "microsoft" : "disabled",
+    audit: {
+      neonConfigured: auditDb.configured,
+      neonReady,
+      localLogPath: auditLogger.logPath
+    }
   });
 });
 
@@ -1771,19 +1706,17 @@ app.get("/api/export-excel/jobs/:jobId", (req, res) => {
 app.get("/api/audit-log", async (req, res) => {
   try {
     const limit = Number(req.query.limit || 1000);
-    const events = auditLogger.filterEvents(
-      await auditLogger.readRecent(limit),
-      {
-        email: req.query.email,
-        reportType: req.query.reportType,
-        event: req.query.event
-      }
-    );
+    const { events, store, durable } = await auditLogger.listEvents({
+      limit,
+      email: req.query.email,
+      reportType: req.query.reportType,
+      event: req.query.event
+    });
     res.setHeader("Cache-Control", "no-store");
     res.json({
       ok: true,
-      durable: Boolean(motherduckToken),
-      store: motherduckToken ? "motherduck+local" : "local",
+      durable,
+      store,
       logPath: auditLogger.logPath,
       count: events.length,
       events
@@ -1799,14 +1732,12 @@ app.get("/api/audit-log", async (req, res) => {
 app.get("/api/audit-log/export", async (req, res) => {
   try {
     const limit = Number(req.query.limit || 5000);
-    const events = auditLogger.filterEvents(
-      await auditLogger.readRecent(limit),
-      {
-        email: req.query.email,
-        reportType: req.query.reportType,
-        event: req.query.event
-      }
-    );
+    const { events } = await auditLogger.listEvents({
+      limit,
+      email: req.query.email,
+      reportType: req.query.reportType,
+      event: req.query.event
+    });
     const stamp = new Date().toISOString().slice(0, 10);
     const fileName = `GRAB-audit-log-${stamp}.csv`;
     const csv = auditLogger.toCsv(events);
@@ -1915,24 +1846,28 @@ app.listen(port, host, () => {
       "Microsoft sign-in disabled — set AZURE_CLIENT_ID and related env vars to enable."
     );
   }
-  console.log(`Export audit log: ${auditLogger.logPath}`);
-  if (motherduckToken) {
-    console.log(
-      "Export audit durable store: MotherDuck grab_app.export_audit_log"
-    );
-    ensureAuditWarehouse()
-      .then(() => {
-        console.log("Export audit warehouse table ready");
-      })
-      .catch((error) => {
-        console.error(
-          "Export audit warehouse setup failed — history may not persist across redeploys:",
-          error
+  console.log(`Export audit local JSONL: ${auditLogger.logPath}`);
+  if (auditDb.configured) {
+    const hostHint = (() => {
+      try {
+        return new URL(auditDatabaseUrl).hostname;
+      } catch {
+        return "(unparsed host)";
+      }
+    })();
+    console.log(`Audit Neon URL detected (host: ${hostHint})`);
+    void auditDb.ensureReady().then((ok) => {
+      if (ok) {
+        console.log("Audit durable store: Neon Postgres (table grab_export_audit ready)");
+      } else {
+        console.warn(
+          "Audit durable store: Neon configured but table init failed — using local JSONL until reconnect."
         );
-      });
+      }
+    });
   } else {
     console.warn(
-      "Export audit durable store unavailable — set MOTHERDUCK_TOKEN to keep history across redeploys."
+      "Audit durable store: not configured (set NEON_DATABASE_URL or AUDIT_DATABASE_URL on Render, then redeploy). Using ephemeral local JSONL only."
     );
   }
 });

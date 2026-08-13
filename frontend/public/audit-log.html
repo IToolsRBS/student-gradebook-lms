@@ -50,8 +50,8 @@
             <h1>Export Audit Log</h1>
             <p>
               Admin-only view of who exported which reports, based on Microsoft
-              sign-in email. History is stored permanently in MotherDuck so it
-              survives app restarts.
+              sign-in email. When Neon is configured, history is stored in Postgres
+              and survives redeploys; otherwise it uses a local server file (wiped on redeploy).
             </p>
           </div>
 

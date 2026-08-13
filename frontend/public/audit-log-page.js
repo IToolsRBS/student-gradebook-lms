@@ -199,11 +199,16 @@ async function loadAuditLog() {
     populateReportFilter(allEvents);
     renderTable();
     if (auditStatusEl) {
-      const storeLabel =
-        payload.store === "motherduck+local"
-          ? "Stored permanently in MotherDuck"
-          : "Local cache only (not durable across redeploys)";
-      auditStatusEl.textContent = `Showing ${getFilteredEvents().length} of ${allEvents.length} events. ${storeLabel}.`;
+      const store = String(payload.store || "local");
+      const storeNote =
+        store === "neon" || store === "neon+local"
+          ? "Neon Postgres (survives redeploys)."
+          : payload.durable
+            ? "Durable store."
+            : "Local store (survives restarts until redeploy).";
+      auditStatusEl.textContent =
+        `Showing ${getFilteredEvents().length} of ${allEvents.length} events. ` +
+        storeNote;
     }
   } catch (error) {
     allEvents = [];
