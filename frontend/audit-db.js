@@ -16,14 +16,23 @@ CREATE TABLE IF NOT EXISTS grab_export_audit (
   filters JSONB,
   file_name TEXT,
   error TEXT,
-  timings_ms JSONB
+  timings_ms JSONB,
+  app_env TEXT,
+  app_url TEXT
 )`;
+
+const MIGRATE_COLUMNS_SQL = [
+  `ALTER TABLE grab_export_audit ADD COLUMN IF NOT EXISTS app_env TEXT`,
+  `ALTER TABLE grab_export_audit ADD COLUMN IF NOT EXISTS app_url TEXT`
+];
 
 const CREATE_INDEXES_SQL = [
   `CREATE INDEX IF NOT EXISTS grab_export_audit_at_idx
      ON grab_export_audit (at DESC)`,
   `CREATE INDEX IF NOT EXISTS grab_export_audit_user_email_idx
-     ON grab_export_audit (user_email)`
+     ON grab_export_audit (user_email)`,
+  `CREATE INDEX IF NOT EXISTS grab_export_audit_app_env_idx
+     ON grab_export_audit (app_env)`
 ];
 
 /**
@@ -61,6 +70,9 @@ export function createAuditDb({ connectionString } = {}) {
       const client = await pool.connect();
       try {
         await client.query(CREATE_TABLE_SQL);
+        for (const sql of MIGRATE_COLUMNS_SQL) {
+          await client.query(sql);
+        }
         for (const sql of CREATE_INDEXES_SQL) {
           await client.query(sql);
         }
@@ -103,14 +115,18 @@ export function createAuditDb({ connectionString } = {}) {
       entry.filters == null ? null : JSON.stringify(entry.filters),
       entry.fileName || null,
       entry.error || null,
-      entry.timingsMs == null ? null : JSON.stringify(entry.timingsMs)
+      entry.timingsMs == null ? null : JSON.stringify(entry.timingsMs),
+      entry.appEnv || null,
+      entry.appUrl || null
     ];
     const sql = `INSERT INTO grab_export_audit (
          event_id, at, event, job_id, report_type, status,
-         user_email, user_name, user_role, filters, file_name, error, timings_ms
+         user_email, user_name, user_role, filters, file_name, error, timings_ms,
+         app_env, app_url
        ) VALUES (
          $1, $2::timestamptz, $3, $4, $5, $6,
-         $7, $8, $9, $10::jsonb, $11, $12, $13::jsonb
+         $7, $8, $9, $10::jsonb, $11, $12, $13::jsonb,
+         $14, $15
        )
        ON CONFLICT (event_id) DO NOTHING`;
 
@@ -119,7 +135,7 @@ export function createAuditDb({ connectionString } = {}) {
       try {
         await pool.query(sql, values);
         console.info(
-          `[audit-db] inserted event=${entry.event} job=${entry.jobId || "-"} email=${entry.userEmail || "-"}`
+          `[audit-db] inserted event=${entry.event} env=${entry.appEnv || "-"} job=${entry.jobId || "-"} email=${entry.userEmail || "-"}`
         );
         return entry;
       } catch (error) {
@@ -149,11 +165,19 @@ export function createAuditDb({ connectionString } = {}) {
       filters: row.filters ?? null,
       fileName: row.file_name,
       error: row.error,
-      timingsMs: row.timings_ms ?? null
+      timingsMs: row.timings_ms ?? null,
+      appEnv: row.app_env ?? null,
+      appUrl: row.app_url ?? null
     };
   }
 
-  async function listEvents({ limit = 200, email, reportType, event } = {}) {
+  async function listEvents({
+    limit = 200,
+    email,
+    reportType,
+    event,
+    appEnv
+  } = {}) {
     const ok = await ensureReady();
     if (!ok) {
       throw new Error("Neon audit store is not ready");
@@ -179,12 +203,20 @@ export function createAuditDb({ connectionString } = {}) {
       params.push(eventQuery);
       clauses.push(`event = $${params.length}`);
     }
+    const envQuery = String(appEnv || "")
+      .trim()
+      .toLowerCase();
+    if (envQuery) {
+      params.push(envQuery);
+      clauses.push(`LOWER(COALESCE(app_env, '')) = $${params.length}`);
+    }
 
     params.push(max);
     const where = clauses.length ? `WHERE ${clauses.join(" AND ")}` : "";
     const result = await pool.query(
       `SELECT event_id, at, event, job_id, report_type, status,
-              user_email, user_name, user_role, filters, file_name, error, timings_ms
+              user_email, user_name, user_role, filters, file_name, error, timings_ms,
+              app_env, app_url
          FROM grab_export_audit
          ${where}
          ORDER BY at DESC

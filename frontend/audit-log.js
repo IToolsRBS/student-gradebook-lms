@@ -10,12 +10,16 @@ import crypto from "crypto";
 export function createAuditLogger({
   logDir,
   fileName = "export-audit.jsonl",
-  durableDb = null
+  durableDb = null,
+  appEnv = "unknown",
+  appUrl = ""
 }) {
   const resolvedDir = path.resolve(logDir);
   fs.mkdirSync(resolvedDir, { recursive: true });
   const logPath = path.join(resolvedDir, fileName);
   const hasDurable = Boolean(durableDb?.configured);
+  const resolvedAppEnv = String(appEnv || "unknown").trim().toLowerCase() || "unknown";
+  const resolvedAppUrl = String(appUrl || "").trim();
 
   function storeLabel(source) {
     if (source === "neon" && hasDurable) return "neon+local";
@@ -28,7 +32,9 @@ export function createAuditLogger({
     const entry = {
       ...event,
       eventId: event?.eventId || crypto.randomUUID(),
-      at: event?.at || new Date().toISOString()
+      at: event?.at || new Date().toISOString(),
+      appEnv: event?.appEnv || resolvedAppEnv,
+      appUrl: event?.appUrl || resolvedAppUrl || null
     };
     const line = `${JSON.stringify(entry)}\n`;
     try {
@@ -56,7 +62,7 @@ export function createAuditLogger({
     }
 
     console.info(
-      `[audit] ${entry.event} email=${entry.userEmail || "-"} report=${entry.reportType || "-"} job=${entry.jobId || "-"} status=${entry.status || "-"}`
+      `[audit] ${entry.event} env=${entry.appEnv} email=${entry.userEmail || "-"} report=${entry.reportType || "-"} job=${entry.jobId || "-"} status=${entry.status || "-"}`
     );
     return entry;
   }
@@ -78,12 +84,15 @@ export function createAuditLogger({
     return events.reverse();
   }
 
-  function filterEvents(events, { email, reportType, event } = {}) {
+  function filterEvents(events, { email, reportType, event, appEnv } = {}) {
     const emailQuery = String(email || "")
       .trim()
       .toLowerCase();
     const reportQuery = String(reportType || "").trim();
     const eventQuery = String(event || "").trim();
+    const envQuery = String(appEnv || "")
+      .trim()
+      .toLowerCase();
     return events.filter((row) => {
       if (
         emailQuery &&
@@ -95,6 +104,13 @@ export function createAuditLogger({
       }
       if (reportQuery && row.reportType !== reportQuery) return false;
       if (eventQuery && row.event !== eventQuery) return false;
+      if (
+        envQuery &&
+        String(row.appEnv || "")
+          .toLowerCase() !== envQuery
+      ) {
+        return false;
+      }
       return true;
     });
   }
@@ -103,14 +119,21 @@ export function createAuditLogger({
    * Prefer Neon when configured; fall back to local JSONL on failure.
    * Returns { events, store, durable }.
    */
-  async function listEvents({ limit = 200, email, reportType, event } = {}) {
+  async function listEvents({
+    limit = 200,
+    email,
+    reportType,
+    event,
+    appEnv
+  } = {}) {
     if (hasDurable) {
       try {
         const events = await durableDb.listEvents({
           limit,
           email,
           reportType,
-          event
+          event,
+          appEnv
         });
         return {
           events,
@@ -129,7 +152,8 @@ export function createAuditLogger({
     const local = filterEvents(readRecentLocal(limit), {
       email,
       reportType,
-      event
+      event,
+      appEnv
     });
     return {
       events: local,
@@ -142,6 +166,8 @@ export function createAuditLogger({
   function toCsv(events) {
     const headers = [
       "at",
+      "appEnv",
+      "appUrl",
       "userEmail",
       "userName",
       "userRole",
@@ -175,6 +201,8 @@ export function createAuditLogger({
   return {
     logPath,
     hasDurable,
+    appEnv: resolvedAppEnv,
+    appUrl: resolvedAppUrl,
     append,
     readRecent: readRecentLocal,
     listEvents,

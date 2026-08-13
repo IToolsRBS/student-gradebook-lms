@@ -151,6 +151,37 @@ const auditDatabaseUrl = readEnvValue([
 ]);
 const auditDb = createAuditDb({ connectionString: auditDatabaseUrl });
 
+function resolveAppUrl() {
+  return (
+    readEnvValue(["BASE_URL", "APP_URL", "RENDER_EXTERNAL_URL"]) || ""
+  ).replace(/\/$/, "");
+}
+
+function resolveAppEnv() {
+  const explicit = (
+    readEnvValue(["APP_ENV", "AUDIT_APP_ENV", "RENDER_SERVICE_NAME"]) || ""
+  )
+    .trim()
+    .toLowerCase();
+  if (explicit === "prod" || explicit === "production") return "prod";
+  if (explicit === "dev" || explicit === "development" || explicit === "staging") {
+    return explicit === "staging" ? "staging" : "dev";
+  }
+  if (explicit.includes("dev")) return "dev";
+  if (explicit.includes("prod")) return "prod";
+  if (explicit.includes("stag")) return "staging";
+
+  const url = resolveAppUrl().toLowerCase();
+  if (url.includes("dev") || url.includes("staging") || url.includes("stage")) {
+    return url.includes("stag") ? "staging" : "dev";
+  }
+  if (url.includes("prod") || url) return url ? "prod" : "unknown";
+  return "unknown";
+}
+
+const appEnv = resolveAppEnv();
+const appUrl = resolveAppUrl();
+
 const pythonBin =
   readEnvValue(["PYTHON_BIN"]) ||
   (process.platform === "win32" ? "python" : "python3");
@@ -254,7 +285,9 @@ function runProcess(command, args, cwd, extraEnv = {}, options = {}) {
 
 const auditLogger = createAuditLogger({
   logDir: auditLogDir,
-  durableDb: auditDb
+  durableDb: auditDb,
+  appEnv,
+  appUrl
 });
 
 async function runWarehouseList(command, extraArgs = []) {
@@ -542,7 +575,9 @@ app.get("/api/health", async (_req, res) => {
     audit: {
       neonConfigured: auditDb.configured,
       neonReady,
-      localLogPath: auditLogger.logPath
+      localLogPath: auditLogger.logPath,
+      appEnv,
+      appUrl
     }
   });
 });
@@ -1710,7 +1745,8 @@ app.get("/api/audit-log", async (req, res) => {
       limit,
       email: req.query.email,
       reportType: req.query.reportType,
-      event: req.query.event
+      event: req.query.event,
+      appEnv: req.query.appEnv
     });
     res.setHeader("Cache-Control", "no-store");
     res.json({
@@ -1718,6 +1754,8 @@ app.get("/api/audit-log", async (req, res) => {
       durable,
       store,
       logPath: auditLogger.logPath,
+      appEnv,
+      appUrl,
       count: events.length,
       events
     });
@@ -1736,7 +1774,8 @@ app.get("/api/audit-log/export", async (req, res) => {
       limit,
       email: req.query.email,
       reportType: req.query.reportType,
-      event: req.query.event
+      event: req.query.event,
+      appEnv: req.query.appEnv
     });
     const stamp = new Date().toISOString().slice(0, 10);
     const fileName = `GRAB-audit-log-${stamp}.csv`;
@@ -1847,6 +1886,7 @@ app.listen(port, host, () => {
     );
   }
   console.log(`Export audit local JSONL: ${auditLogger.logPath}`);
+  console.log(`Audit app env: ${appEnv}${appUrl ? ` (${appUrl})` : ""}`);
   if (auditDb.configured) {
     const hostHint = (() => {
       try {

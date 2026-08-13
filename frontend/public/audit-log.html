@@ -84,6 +84,15 @@
                     <option value="export_downloaded">Downloaded</option>
                   </select>
                 </div>
+                <div class="filter-field">
+                  <label for="auditEnvFilter">Environment</label>
+                  <select id="auditEnvFilter" class="audit-select">
+                    <option value="">All environments</option>
+                    <option value="prod">Prod</option>
+                    <option value="dev">Dev</option>
+                    <option value="staging">Staging</option>
+                  </select>
+                </div>
               </div>
               <div class="audit-actions">
                 <button id="refreshAuditBtn" class="secondary-btn" type="button">
@@ -104,6 +113,7 @@
                 <thead>
                   <tr>
                     <th scope="col">When</th>
+                    <th scope="col">Env</th>
                     <th scope="col">User</th>
                     <th scope="col">Event</th>
                     <th scope="col">Report</th>
@@ -114,7 +124,7 @@
                 </thead>
                 <tbody id="auditTableBody">
                   <tr>
-                    <td colspan="7" class="audit-empty">Loading...</td>
+                    <td colspan="8" class="audit-empty">Loading...</td>
                   </tr>
                 </tbody>
               </table>

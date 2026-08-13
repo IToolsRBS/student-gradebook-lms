@@ -46,5 +46,7 @@ services:
         sync: false
       - key: NEON_DATABASE_URL
         sync: false
+      - key: APP_ENV
+        value: prod
       - key: AZURE_AUTH_ENABLED
         value: "true"

@@ -9,6 +9,7 @@ const auditTableBody = document.getElementById("auditTableBody");
 const auditEmailFilter = document.getElementById("auditEmailFilter");
 const auditReportFilter = document.getElementById("auditReportFilter");
 const auditEventFilter = document.getElementById("auditEventFilter");
+const auditEnvFilter = document.getElementById("auditEnvFilter");
 const refreshAuditBtn = document.getElementById("refreshAuditBtn");
 const exportAuditBtn = document.getElementById("exportAuditBtn");
 
@@ -26,6 +27,17 @@ function formatWhen(value) {
     minute: "2-digit",
     second: "2-digit"
   });
+}
+
+function formatEnv(value) {
+  const env = String(value || "")
+    .trim()
+    .toLowerCase();
+  if (!env || env === "unknown") return "—";
+  if (env === "prod" || env === "production") return "Prod";
+  if (env === "dev" || env === "development") return "Dev";
+  if (env === "staging") return "Staging";
+  return env.charAt(0).toUpperCase() + env.slice(1);
 }
 
 function formatEvent(event) {
@@ -89,6 +101,9 @@ function getFilteredEvents() {
     .toLowerCase();
   const reportQuery = String(auditReportFilter?.value || "").trim();
   const eventQuery = String(auditEventFilter?.value || "").trim();
+  const envQuery = String(auditEnvFilter?.value || "")
+    .trim()
+    .toLowerCase();
 
   return allEvents.filter((event) => {
     if (
@@ -101,6 +116,13 @@ function getFilteredEvents() {
     }
     if (reportQuery && event.reportType !== reportQuery) return false;
     if (eventQuery && event.event !== eventQuery) return false;
+    if (
+      envQuery &&
+      String(event.appEnv || "")
+        .toLowerCase() !== envQuery
+    ) {
+      return false;
+    }
     return true;
   });
 }
@@ -122,13 +144,42 @@ function populateReportFilter(events) {
   if (reports.includes(current)) auditReportFilter.value = current;
 }
 
+function populateEnvFilter(events) {
+  if (!auditEnvFilter) return;
+  const current = auditEnvFilter.value;
+  const envs = [
+    ...new Set(
+      events
+        .map((event) =>
+          String(event.appEnv || "")
+            .trim()
+            .toLowerCase()
+        )
+        .filter((env) => env && env !== "unknown")
+    )
+  ].sort();
+  const known = new Set(["prod", "dev", "staging"]);
+  const extras = envs.filter((env) => !known.has(env));
+  auditEnvFilter.innerHTML =
+    `<option value="">All environments</option>` +
+    `<option value="prod">Prod</option>` +
+    `<option value="dev">Dev</option>` +
+    `<option value="staging">Staging</option>` +
+    extras
+      .map((env) => `<option value="${env}">${formatEnv(env)}</option>`)
+      .join("");
+  if (["", "prod", "dev", "staging", ...extras].includes(current)) {
+    auditEnvFilter.value = current;
+  }
+}
+
 function renderTable() {
   if (!auditTableBody) return;
   const events = getFilteredEvents();
   if (!events.length) {
     auditTableBody.innerHTML = `
       <tr>
-        <td colspan="7" class="audit-empty">No audit events match the current filters.</td>
+        <td colspan="8" class="audit-empty">No audit events match the current filters.</td>
       </tr>
     `;
     if (auditStatusEl) {
@@ -153,9 +204,13 @@ function renderTable() {
               event.event === "export_downloaded"
             ? "audit-event-ok"
             : "";
+      const envTitle = event.appUrl
+        ? ` title="${escapeHtml(event.appUrl)}"`
+        : "";
       return `
         <tr>
           <td>${escapeHtml(formatWhen(event.at))}</td>
+          <td${envTitle}>${escapeHtml(formatEnv(event.appEnv))}</td>
           <td class="audit-user-cell">${userLabel}</td>
           <td><span class="audit-event-pill ${eventClass}">${escapeHtml(
             formatEvent(event.event)
@@ -197,6 +252,7 @@ async function loadAuditLog() {
     }
     allEvents = Array.isArray(payload.events) ? payload.events : [];
     populateReportFilter(allEvents);
+    populateEnvFilter(allEvents);
     renderTable();
     if (auditStatusEl) {
       const store = String(payload.store || "local");
@@ -215,7 +271,7 @@ async function loadAuditLog() {
     if (auditTableBody) {
       auditTableBody.innerHTML = `
         <tr>
-          <td colspan="7" class="audit-empty">Could not load audit log.</td>
+          <td colspan="8" class="audit-empty">Could not load audit log.</td>
         </tr>
       `;
     }
@@ -233,9 +289,11 @@ function buildExportQuery() {
   const email = String(auditEmailFilter?.value || "").trim();
   const report = String(auditReportFilter?.value || "").trim();
   const event = String(auditEventFilter?.value || "").trim();
+  const env = String(auditEnvFilter?.value || "").trim();
   if (email) params.set("email", email);
   if (report) params.set("reportType", report);
   if (event) params.set("event", event);
+  if (env) params.set("appEnv", env);
   return params.toString();
 }
 
@@ -281,6 +339,7 @@ exportAuditBtn?.addEventListener("click", () => {
 auditEmailFilter?.addEventListener("input", () => renderTable());
 auditReportFilter?.addEventListener("change", () => renderTable());
 auditEventFilter?.addEventListener("change", () => renderTable());
+auditEnvFilter?.addEventListener("change", () => renderTable());
 
 startClock();
 loadSignedInUser();

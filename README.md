@@ -41,6 +41,7 @@ Auth is **required** when `NODE_ENV=production`. Register an app in [Microsoft E
 Every export is recorded against the signed-in Microsoft email:
 
 - Events: `export_started`, `export_completed`, `export_failed`, `export_downloaded`
+- Each row is tagged with **`app_env`** (`prod` / `dev`) and optional **`app_url`** so shared Neon history can distinguish the two Render services.
 - **Durable store (recommended):** Neon Postgres via `AUDIT_DATABASE_URL` or `NEON_DATABASE_URL` (also accepts `DATABASE_URL`). Table `grab_export_audit` is created on startup. History survives Render redeploys.
 - **Local mirror:** append-only JSONL under `AUDIT_LOG_DIR` (defaults to `EXPORT_OUTPUT_DIR/audit`, typically `/tmp` on Render) — wiped on redeploy; used as fallback if Neon is unset or unreachable.
 - Also emitted to server logs as `[audit] ...`
@@ -53,6 +54,7 @@ Every export is recorded against the signed-in Microsoft email:
 3. On Render → your web service → **Environment**, set one of:
    - `NEON_DATABASE_URL` (matches `render.yaml`), or
    - `AUDIT_DATABASE_URL` (preferred name in docs)
-4. Redeploy. Logs should show `Audit durable store: Neon Postgres`. The audit table is created automatically — no manual SQL needed.
+4. On **each** Render service set `APP_ENV=prod` or `APP_ENV=dev` (also accepted: `AUDIT_APP_ENV`). If unset, the app infers from `BASE_URL` / `RENDER_EXTERNAL_URL` when the hostname contains `dev`/`staging`/`prod`.
+5. Redeploy. Logs should show `Audit durable store: Neon Postgres` and `Audit app env: prod` (or `dev`). The audit table is created automatically — no manual SQL needed.
 
 `BASE_URL` is optional on Render — `RENDER_EXTERNAL_URL` is used automatically.
