@@ -68,34 +68,36 @@
 
         <div class="report-intro">
           <h1>Intake Summary Report</h1>
-          <p>Generate a programme-level overview for the selected intake.</p>
+          <p>Generate a programme-level overview for one or more intakes in a single workbook.</p>
         </div>
 
         <section class="card report-card">
           <div class="filters filters-single">
             <div class="filter-field">
               <label for="categoryDropdownBtn">Category (Intake)</label>
-              <div class="custom-dropdown" data-dropdown="category">
+              <div class="custom-dropdown multi-select" data-dropdown="category">
                 <button
                   id="categoryDropdownBtn"
                   class="dropdown-trigger"
                   type="button"
                   aria-haspopup="listbox"
                   aria-expanded="false"
+                  aria-multiselectable="true"
                 >
-                  <span class="dropdown-value">Select category</span>
+                  <span class="dropdown-value">Select intake(s)</span>
                   <span class="dropdown-arrow" aria-hidden="true"></span>
                 </button>
                 <input
                   class="dropdown-search"
                   type="text"
-                  placeholder="Search category..."
-                  aria-label="Search category"
+                  placeholder="Search intake..."
+                  aria-label="Search intake"
                 />
                 <ul
                   class="dropdown-menu"
                   role="listbox"
-                  aria-label="Category options"
+                  aria-label="Intake options"
+                  aria-multiselectable="true"
                 ></ul>
               </div>
             </div>
@@ -137,12 +139,13 @@
 
         <section class="card report-preview-card" aria-labelledby="previewHeading">
           <h2 id="previewHeading">
-            Preview: Report Structure (One row per programme)
+            Preview: Report Structure (One row per intake and programme)
           </h2>
           <div class="preview-table-wrap">
             <table class="preview-table">
               <thead>
                 <tr>
+                  <th scope="col">Category (Intake)</th>
                   <th scope="col">Programme</th>
                   <th scope="col">Active Modules</th>
                   <th scope="col">Students</th>
@@ -153,6 +156,7 @@
               </thead>
               <tbody>
                 <tr>
+                  <td>2025 January</td>
                   <td>MBA</td>
                   <td>12</td>
                   <td>86</td>
@@ -161,6 +165,7 @@
                   <td>12</td>
                 </tr>
                 <tr>
+                  <td>2025 January</td>
                   <td>BBA</td>
                   <td>10</td>
                   <td>73</td>
@@ -169,12 +174,13 @@
                   <td>9</td>
                 </tr>
                 <tr>
-                  <td>BCom</td>
-                  <td>8</td>
-                  <td>61</td>
-                  <td>2</td>
-                  <td>3</td>
-                  <td>7</td>
+                  <td>2025 July</td>
+                  <td>MBA</td>
+                  <td>11</td>
+                  <td>79</td>
+                  <td>4</td>
+                  <td>5</td>
+                  <td>10</td>
                 </tr>
               </tbody>
             </table>

@@ -66,7 +66,11 @@ function formatReport(reportType) {
 function formatFilters(filters) {
   if (!filters || typeof filters !== "object") return "—";
   const parts = [];
-  if (filters.categoryName) parts.push(`Category: ${filters.categoryName}`);
+  if (filters.categoryNames?.length) {
+    parts.push(`Categories: ${filters.categoryNames.join(", ")}`);
+  } else if (filters.categoryName) {
+    parts.push(`Category: ${filters.categoryName}`);
+  }
   if (filters.programmeCodes?.length) {
     parts.push(`Programmes: ${filters.programmeCodes.join(", ")}`);
   } else if (filters.programmeCode) {

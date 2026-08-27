@@ -16,6 +16,7 @@ from openpyxl import Workbook
 
 from motherduck_client import (
     courses_schema,
+    dim_schema,
     qualified_relation,
     staging_schema,
 )
@@ -46,6 +47,53 @@ def _iter_query_dicts(
             yield dict(zip(columns, tup))
 
 
+def _dim_students_join(
+    conn: duckdb.DuckDBPyConnection,
+    user_alias: str,
+    *,
+    aggregate: bool = False,
+) -> tuple[str, str]:
+    """LEFT JOIN dim_students for phone / personal_email when the table exists."""
+    null_phone = "CAST(NULL AS VARCHAR)"
+    if aggregate:
+        select_sql = (
+            f"MAX({null_phone}) AS phone, "
+            f"MAX({null_phone}) AS phone_alt, "
+            f"MAX({null_phone}) AS personal_email"
+        )
+    else:
+        select_sql = (
+            f"{null_phone} AS phone, "
+            f"{null_phone} AS phone_alt, "
+            f"{null_phone} AS personal_email"
+        )
+    students = qualified_relation(dim_schema(), "dim_students")
+    try:
+        conn.execute(f"SELECT 1 FROM {students} LIMIT 1")
+    except duckdb.CatalogException:
+        return "", select_sql
+    join_sql = (
+        f"LEFT JOIN {students} AS ds "
+        f"ON ds.user_id = {user_alias}.user_id"
+    )
+    phone = "TRIM(ds.phone)"
+    phone_alt = "TRIM(ds.phone_alt)"
+    personal_email = "TRIM(ds.personal_email)"
+    if aggregate:
+        select_sql = (
+            f"MAX({phone}) AS phone, "
+            f"MAX({phone_alt}) AS phone_alt, "
+            f"MAX({personal_email}) AS personal_email"
+        )
+    else:
+        select_sql = (
+            f"{phone} AS phone, "
+            f"{phone_alt} AS phone_alt, "
+            f"{personal_email} AS personal_email"
+        )
+    return join_sql, select_sql
+
+
 def _fetch_enrollment_student_summary(
     conn: duckdb.DuckDBPyConnection,
     course_ids: Sequence[int],
@@ -56,6 +104,7 @@ def _fetch_enrollment_student_summary(
     courses = qualified_relation(courses_schema(), "dim_courses")
     enrollments = qualified_relation(staging_schema(), "stg_moodle_enrollments")
     clause, params = _course_id_filter(course_ids)
+    students_join, students_select = _dim_students_join(conn, "e", aggregate=True)
     return list(
         _iter_query_dicts(
             conn,
@@ -64,15 +113,17 @@ def _fetch_enrollment_student_summary(
                 TRIM(e.user_idnumber) AS student_no,
                 TRIM(e.user_fullname) AS student,
                 TRIM(e.user_email) AS email,
+                {students_select},
                 ? AS programme,
                 COUNT(DISTINCT e.course_id) AS modules
             FROM {enrollments} AS e
             INNER JOIN {courses} AS dc ON dc.course_id = e.course_id
+            {students_join}
             WHERE {clause}
               AND e.primary_role = 'student'
               AND COALESCE(e.is_suspended, false) = false
               AND TRIM(COALESCE(e.user_idnumber, '')) <> ''
-            GROUP BY 1, 2, 3, 4
+            GROUP BY 1, 2, 3, 7
             ORDER BY student
             """,
             [display_programme, *params],
@@ -124,12 +175,14 @@ def _iter_grade_rows(
     grades = qualified_relation(staging_schema(), "stg_moodle_grades")
     items = qualified_relation(staging_schema(), "stg_moodle_grade_items")
     clause, params = _course_id_filter(course_ids)
+    students_join, students_select = _dim_students_join(conn, "g")
     yield from _iter_query_dicts(
         conn,
         f"""
         SELECT
             TRIM(g.user_idnumber) AS student_no,
             TRIM(g.user_fullname) AS student,
+            {students_select},
             ? AS programme,
             TRIM(dc.course_shortname) AS module_code,
             TRIM(dc.course_fullname) AS module,
@@ -142,6 +195,7 @@ def _iter_grade_rows(
         INNER JOIN {courses} AS dc ON dc.course_id = g.course_id
         LEFT JOIN {items} AS gi
             ON gi.course_id = g.course_id AND gi.grade_item_id = g.grade_item_id
+        {students_join}
         WHERE {clause}
           AND TRIM(COALESCE(g.user_idnumber, '')) <> ''
         ORDER BY student, module_code, assessment
@@ -165,6 +219,7 @@ def build_workbook_offering_fallback(
         COURSE_NOTES_SHEET_TITLE,
         MART_SHEET_HEADERS,
         PROGRAMME_SUMMARY_HEADERS,
+        STUDENT_CONTACT_HEADERS,
         add_header_only_sheet,
         append_data_row,
         finish_sheet,
@@ -201,7 +256,14 @@ def build_workbook_offering_fallback(
     finish_sheet(ws_prog, PROGRAMME_SUMMARY_HEADERS, 1)
 
     ws_stu = wb.create_sheet(title="Student Summary"[:31])
-    stu_headers = ["Programme", "Student No", "Student", "Email", "Modules"]
+    stu_headers = [
+        "Programme",
+        "Student No",
+        "Student",
+        "Email",
+        *STUDENT_CONTACT_HEADERS,
+        "Modules",
+    ]
     write_headers(ws_stu, stu_headers)
     for row in students:
         append_data_row(
@@ -211,6 +273,9 @@ def build_workbook_offering_fallback(
                 format_cell(row.get("student_no")),
                 format_cell(row.get("student")),
                 format_cell(row.get("email")),
+                format_cell(row.get("phone")),
+                format_cell(row.get("phone_alt")),
+                format_cell(row.get("personal_email")),
                 format_cell(row.get("modules")),
             ],
         )
@@ -248,6 +313,7 @@ def build_workbook_offering_fallback(
         "Programme",
         "Student No",
         "Student",
+        *STUDENT_CONTACT_HEADERS,
         "Module Code",
         "Module",
         "Assessment",
@@ -265,6 +331,9 @@ def build_workbook_offering_fallback(
                 format_cell(row.get("programme")),
                 format_cell(row.get("student_no")),
                 format_cell(row.get("student")),
+                format_cell(row.get("phone")),
+                format_cell(row.get("phone_alt")),
+                format_cell(row.get("personal_email")),
                 format_cell(row.get("module_code")),
                 format_cell(row.get("module")),
                 format_cell(row.get("assessment")),

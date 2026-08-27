@@ -41,11 +41,14 @@ from populate_gradebook_from_warehouse import (
     FETCH_CHUNK_SIZE,
     MAX_COLUMN_WIDTH,
     NOTE_FIELD_MAP,
+    STUDENT_CONTACT_FIELD_MAP,
+    STUDENT_CONTACT_HEADERS,
     TABLE_MISSED,
     _mart_columns,
     _pick_first_mart_column,
     _update_col_widths,
     append_data_row,
+    enrich_student_contact_query,
     finish_sheet,
     format_cell,
     normalize_row,
@@ -71,6 +74,7 @@ DETAIL_HEADERS: list[str] = [
     "Student No",
     "Student",
     "Email",
+    *STUDENT_CONTACT_HEADERS,
     "Module Code",
     "Module",
     "Assessment",
@@ -89,6 +93,7 @@ DETAIL_FIELD_MAP: list[tuple[str, tuple[str, ...]]] = [
     ("Student No", ("student_no",)),
     ("Student", ("student", "user_fullname")),
     ("Email", ("email", "user_email")),
+    *STUDENT_CONTACT_FIELD_MAP,
     ("Module Code", ("module_code", "course_shortname")),
     ("Module", ("module", "course_fullname")),
     ("Assessment", ("assessment", "assessment_name")),
@@ -180,6 +185,8 @@ def _build_missed_filter_sql(
             query += " ORDER BY 1"
     elif not group_by_sql:
         query += " ORDER BY 1"
+    if select_sql.strip() == "*" and not group_by_sql:
+        query = enrich_student_contact_query(conn, query, mart_cols)
     return query, params, mart_cols
 
 

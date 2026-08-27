@@ -108,6 +108,34 @@ function assertBatchProgrammeLimit(programmeCodes, res) {
   return false;
 }
 
+const MAX_BATCH_CATEGORIES = Math.max(
+  20,
+  Number(process.env.MAX_BATCH_CATEGORIES || 50) || 50
+);
+
+function assertBatchCategoryLimit(categoryNames, res) {
+  if (categoryNames.length <= MAX_BATCH_CATEGORIES) return true;
+  res.status(400).json({
+    error:
+      `Too many intakes selected (${categoryNames.length}). ` +
+      `Export at most ${MAX_BATCH_CATEGORIES} intakes per batch to avoid server timeouts — split into smaller batches.`
+  });
+  return false;
+}
+
+function parseCategoryNames(body) {
+  const rawNames = Array.isArray(body?.categoryNames)
+    ? body.categoryNames
+    : body?.categoryName
+      ? [body.categoryName]
+      : [];
+  return [
+    ...new Set(
+      rawNames.map((name) => String(name || "").trim()).filter(Boolean)
+    )
+  ];
+}
+
 function readEnvFromFile(filePath, keys) {
   if (!fs.existsSync(filePath)) return null;
   const text = fs.readFileSync(filePath, "utf8");
@@ -338,6 +366,7 @@ function publicJobPayload(job) {
     updatedAt: job.updatedAt,
     timingsMs: job.timingsMs || {},
     categoryName: job.categoryName,
+    categoryNames: job.categoryNames,
     programmeCodes: job.programmeCodes,
     programmeCode: job.programmeCode,
     reportType: job.reportType
@@ -364,7 +393,8 @@ function getRequestUser(req) {
 function auditFiltersFromJob(job) {
   if (!job) return null;
   const filters = {};
-  if (job.categoryName) filters.categoryName = job.categoryName;
+  if (job.categoryNames?.length) filters.categoryNames = job.categoryNames;
+  else if (job.categoryName) filters.categoryName = job.categoryName;
   if (job.programmeCodes?.length) filters.programmeCodes = job.programmeCodes;
   if (job.programmeCode) filters.programmeCode = job.programmeCode;
   if (job.moduleCodes?.length) filters.moduleCodes = job.moduleCodes;
@@ -871,11 +901,16 @@ app.post("/api/export-excel/start", async (req, res) => {
 });
 
 app.post("/api/export-intake-summary/start", async (req, res) => {
-  const categoryName = String(req.body?.categoryName || "").trim();
+  const categoryNames = parseCategoryNames(req.body);
+  const categoryName =
+    categoryNames.length === 1 ? categoryNames[0] : undefined;
 
-  if (!categoryName) {
-    return res.status(400).json({ error: "categoryName is required" });
+  if (!categoryNames.length) {
+    return res.status(400).json({
+      error: "categoryName or categoryNames is required"
+    });
   }
+  if (!assertBatchCategoryLimit(categoryNames, res)) return;
   if (!motherduckToken) {
     return res.status(500).json({
       error: "Missing MOTHERDUCK_TOKEN in environment/.env"
@@ -885,14 +920,22 @@ app.post("/api/export-intake-summary/start", async (req, res) => {
   cleanupOldJobs();
   const jobId = makeJobId();
   const startedAt = Date.now();
+  const isBatch = categoryNames.length > 1;
+  const queuedMessage = isBatch
+    ? `Queued for batch intake summary export (${categoryNames.length} intakes)...`
+    : "Queued for intake summary export...";
+  const buildingMessage = isBatch
+    ? `Building batch Intake Summary for ${categoryNames.length} intakes...`
+    : "Building Intake Summary...";
   registerExportJob(req, {
     jobId,
     status: "queued",
     stage: "queued",
-    message: "Queued for intake summary export...",
+    message: queuedMessage,
     startedAt,
     updatedAt: startedAt,
     categoryName,
+    categoryNames,
     reportType: "intake-summary",
     timingsMs: {}
   });
@@ -900,30 +943,31 @@ app.post("/api/export-intake-summary/start", async (req, res) => {
   (async () => {
     try {
       console.info(
-        `[export-job:${jobId}] report=intake-summary category=${categoryName}`
+        `[export-job:${jobId}] report=intake-summary categories=${categoryNames.join(" | ")}`
       );
       updateJob(jobId, {
         status: "running",
         stage: "excel",
-        message: "Building Intake Summary..."
+        message: buildingMessage
       });
 
       const heartbeat = setInterval(() => {
         const elapsedSec = Math.round((Date.now() - startedAt) / 1000);
         updateJob(jobId, {
-          message: `Building Intake Summary... (${elapsedSec}s)`
+          message: `${buildingMessage} (${elapsedSec}s)`
         });
       }, 10000);
 
       const pythonArgs = [
         "populate_intake_summary.py",
-        "--category-name",
-        categoryName,
         "--warehouse-schema",
         warehouseSchema,
         "--output-dir",
         exportOutputDir
       ];
+      for (const name of categoryNames) {
+        pythonArgs.push("--category-name", name);
+      }
 
       let exportResult;
       try {

@@ -46,10 +46,13 @@ from populate_gradebook_from_warehouse import (
     MAX_COLUMN_WIDTH,
     TABLE_ASSESSMENT,
     TABLE_STUDENT,
+    STUDENT_CONTACT_FIELD_MAP,
+    STUDENT_CONTACT_HEADERS,
     _mart_columns,
     _pick_first_mart_column,
     _update_col_widths,
     append_data_row,
+    enrich_student_contact_query,
     finish_sheet,
     format_cell,
     normalize_row,
@@ -70,6 +73,7 @@ INACTIVE_STUDENT_HEADERS: list[str] = [
     "Student No",
     "Student",
     "Email",
+    *STUDENT_CONTACT_HEADERS,
     "Status",
     "Modules",
     "Last Moodle Access",
@@ -82,6 +86,7 @@ NEVER_SUBMITTED_HEADERS: list[str] = [
     "Student No",
     "Student",
     "Email",
+    *STUDENT_CONTACT_HEADERS,
     "Status",
     "Modules",
     "Last Moodle Access",
@@ -481,6 +486,7 @@ def _build_student_base_sql(
             query += " ORDER BY 1"
     else:
         query += " ORDER BY 1"
+    query = enrich_student_contact_query(conn, query, mart_cols)
     return query, params, mart_cols
 
 
@@ -534,6 +540,7 @@ def _write_inactive_student_rows(
             format_cell(pick(row, "student_no")),
             format_cell(pick(row, "student", "user_fullname")),
             format_cell(pick(row, "email", "user_email")),
+            *[format_cell(pick(row, *aliases)) for _, aliases in STUDENT_CONTACT_FIELD_MAP],
             format_cell(pick(row, "status")),
             format_cell(pick(row, "total_modules", "modules")),
             format_cell(pick(row, "last_moodle_access", "last_access")),
@@ -563,6 +570,7 @@ def _write_never_submitted_rows(
             format_cell(pick(row, "student_no")),
             format_cell(pick(row, "student", "user_fullname")),
             format_cell(pick(row, "email", "user_email")),
+            *[format_cell(pick(row, *aliases)) for _, aliases in STUDENT_CONTACT_FIELD_MAP],
             format_cell(pick(row, "status")),
             format_cell(pick(row, "total_modules", "modules")),
             format_cell(pick(row, "last_moodle_access", "last_access")),

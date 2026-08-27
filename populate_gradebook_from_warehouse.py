@@ -43,6 +43,7 @@ _FONT_SIZE = 11
 
 from motherduck_client import (
     connect_motherduck,
+    dim_schema,
     gradebook_schema,
     qualified_relation,
     read_env_value,
@@ -64,6 +65,9 @@ COURSE_NOTES_SHEET_TITLE = "Course Notes"
 COURSE_NOTES_COLUMNS: tuple[str, ...] = (
     "user_full_name",
     "username",
+    "phone",
+    "phone_alt",
+    "personal_email",
     "course_display_name",
     "content",
     "timestamp",
@@ -76,6 +80,18 @@ NOTE_FIELD_MAP: list[tuple[str, tuple[str, ...]]] = [
     ("Note created by", ("latest_note_staff_id",)),
     ("Note course", ("latest_note_course_display_name",)),
 ]
+
+# Contact columns from dim_students and gradebook student marts.
+# Assessment detail stores them as user_phone / user_phone_alt / user_personal_email.
+STUDENT_CONTACT_FIELD_MAP: list[tuple[str, tuple[str, ...]]] = [
+    ("Phone", ("phone", "user_phone")),
+    ("Phone Alt", ("phone_alt", "user_phone_alt")),
+    ("Personal Email", ("personal_email", "user_personal_email")),
+]
+STUDENT_CONTACT_HEADERS: list[str] = [label for label, _ in STUDENT_CONTACT_FIELD_MAP]
+STUDENT_CONTACT_TABLES: frozenset[str] = frozenset(
+    {TABLE_STUDENT, TABLE_ASSESSMENT, TABLE_MISSED}
+)
 
 # Column headers for mart sheets (used when workbooks need empty placeholder tabs).
 MART_SHEET_HEADERS: dict[str, list[str]] = {
@@ -96,6 +112,7 @@ MART_SHEET_HEADERS: dict[str, list[str]] = {
         "Student No",
         "Student",
         "Email",
+        *STUDENT_CONTACT_HEADERS,
         "Module Code",
         "Module",
         "Assessment",
@@ -218,6 +235,87 @@ def pick(row: dict[str, Any], *keys: str) -> Any:
             continue
         return value
     return ""
+
+
+_DIM_STUDENTS_REL_CACHE: dict[str, str | None] = {}
+
+
+def _dim_students_relation(conn: duckdb.DuckDBPyConnection) -> str | None:
+    key = dim_schema()
+    if key in _DIM_STUDENTS_REL_CACHE:
+        return _DIM_STUDENTS_REL_CACHE[key]
+    rel = qualified_relation(key, "dim_students")
+    try:
+        conn.execute(f"SELECT 1 FROM {rel} LIMIT 1")
+    except duckdb.CatalogException:
+        _DIM_STUDENTS_REL_CACHE[key] = None
+        return None
+    _DIM_STUDENTS_REL_CACHE[key] = rel
+    return rel
+
+
+def _dim_students_join_on(mart_cols: dict[str, str], src_alias: str = "src") -> str | None:
+    """Single join key: user_id, else student number / username, else student_id."""
+    user_id_col = _pick_first_mart_column(mart_cols, ("user_id",))
+    if user_id_col:
+        return (
+            f'TRIM(CAST(ds.user_id AS VARCHAR)) = '
+            f'TRIM(CAST({src_alias}."{user_id_col}" AS VARCHAR))'
+        )
+    student_no_col = _pick_first_mart_column(
+        mart_cols, ("student_no", "user_username", "username")
+    )
+    if student_no_col:
+        return (
+            f'TRIM(CAST(ds.username AS VARCHAR)) = '
+            f'TRIM(CAST({src_alias}."{student_no_col}" AS VARCHAR))'
+        )
+    student_id_col = _pick_first_mart_column(mart_cols, ("student_id", "user_idnumber"))
+    if student_id_col:
+        return (
+            f'TRIM(CAST(ds.user_idnumber AS VARCHAR)) = '
+            f'TRIM(CAST({src_alias}."{student_id_col}" AS VARCHAR))'
+        )
+    return None
+
+
+def enrich_student_contact_query(
+    conn: duckdb.DuckDBPyConnection,
+    query: str,
+    mart_cols: dict[str, str],
+) -> str:
+    """
+    Add phone / phone_alt / personal_email from the mart, coalesced with dim_students.
+
+    Duplicate output names are intentional: Python row dicts keep the last value.
+    """
+    dim_rel = _dim_students_relation(conn)
+    join_on = _dim_students_join_on(mart_cols) if dim_rel else None
+    selects: list[str] = []
+    for _label, aliases in STUDENT_CONTACT_FIELD_MAP:
+        out_name = aliases[0]
+        parts: list[str] = []
+        for alias in aliases:
+            actual = mart_cols.get(alias.lower())
+            if actual:
+                parts.append(
+                    f'NULLIF(TRIM(CAST(src."{actual}" AS VARCHAR)), \'\')'
+                )
+        if dim_rel and join_on:
+            parts.append(
+                f'NULLIF(TRIM(CAST(ds."{out_name}" AS VARCHAR)), \'\')'
+            )
+        if not parts:
+            selects.append(f"CAST(NULL AS VARCHAR) AS {out_name}")
+        elif len(parts) == 1:
+            selects.append(f"{parts[0]} AS {out_name}")
+        else:
+            selects.append(f"COALESCE({', '.join(parts)}) AS {out_name}")
+    join_sql = (
+        f"LEFT JOIN {dim_rel} AS ds ON {join_on}" if dim_rel and join_on else ""
+    )
+    extra = ", ".join(selects)
+    return f"SELECT src.*, {extra} FROM ({query}) AS src {join_sql}"
 
 
 def _format_sequence(value: Any) -> str:
@@ -466,8 +564,10 @@ def _heuristic_column_width(header: str) -> int:
     # Explicit widths for common gradebook columns.
     if h == "programme":
         return 12
-    if h == "email":
+    if h in {"email", "personal email"}:
         return min(34, max_w)
+    if h in {"phone", "phone alt"}:
+        return min(18, max_w)
     if h in {"module code", "course code"}:
         return min(24, max_w)
     if h in {
@@ -794,6 +894,8 @@ def _build_mart_filter_sql(
         query += " ORDER BY 1"
     if limit is not None:
         query += f" LIMIT {int(limit)}"
+    if table in STUDENT_CONTACT_TABLES and limit is None:
+        query = enrich_student_contact_query(conn, query, mart_cols)
     return query, params
 
 
@@ -1035,10 +1137,26 @@ def iter_course_note_rows(
             else "CAST(NULL AS VARCHAR) AS programme"
         )
         student_base_sql = student_sql.rsplit(" ORDER BY ", 1)[0]
-        note_select_cols = ", ".join(
-            f'n."{col}"'
-            for key, col in note_cols.items()
-            if key != "programme"
+        dim_rel = _dim_students_relation(conn)
+        note_select_parts: list[str] = []
+        for key, col in note_cols.items():
+            if key == "programme":
+                continue
+            if dim_rel and key in {"phone", "phone_alt", "personal_email"}:
+                note_select_parts.append(
+                    "COALESCE("
+                    f'NULLIF(TRIM(CAST(n."{col}" AS VARCHAR)), \'\'), '
+                    f'NULLIF(TRIM(CAST(ds."{key}" AS VARCHAR)), \'\')'
+                    f') AS "{col}"'
+                )
+            else:
+                note_select_parts.append(f'n."{col}"')
+        note_select_cols = ", ".join(note_select_parts)
+        dim_join = (
+            f'LEFT JOIN {dim_rel} AS ds ON TRIM(CAST(ds.username AS VARCHAR)) = '
+            f'TRIM(CAST(n."{username_col}" AS VARCHAR))'
+            if dim_rel
+            else ""
         )
         if "timestamp" in note_cols:
             order_sql = (
@@ -1064,6 +1182,7 @@ def iter_course_note_rows(
                 WHERE TRIM(CAST(s."{student_no_col}" AS VARCHAR)) <> ''
             ) AS s
                 ON TRIM(CAST(n."{username_col}" AS VARCHAR)) = s.student_no
+            {dim_join}
             ORDER BY {order_sql}
         """
         result = conn.execute(query, student_params)
@@ -1216,6 +1335,7 @@ def write_student_summary(
         "Student No",
         "Student",
         "Email",
+        *STUDENT_CONTACT_HEADERS,
         "Status",
         "Modules",
         "Missed Submissions",
@@ -1230,6 +1350,7 @@ def write_student_summary(
         ("Student No", ("student_no",)),
         ("Student", ("student",)),
         ("Email", ("email",)),
+        *STUDENT_CONTACT_FIELD_MAP,
         ("Status", ("status",)),
         ("Modules", ("total_modules", "modules")),
         ("Missed Submissions", ("missed_submissions", "missed")),
@@ -1432,6 +1553,7 @@ def write_student_assessment_detail(
         "Student No",
         "Student",
         "Email",
+        *STUDENT_CONTACT_HEADERS,
         "Module Code",
         "Module",
         "Assessment",
@@ -1508,6 +1630,7 @@ def write_student_assessment_detail(
             format_cell(pick(row, "student_no", "user_username")),
             format_cell(pick(row, "user_fullname")),
             format_cell(pick(row, "user_email")),
+            *[format_cell(pick(row, *aliases)) for _, aliases in STUDENT_CONTACT_FIELD_MAP],
             format_cell(pick(row, "course_shortname")),
             format_cell(pick(row, "course_fullname")),
             format_cell(pick(row, "assessment", "assessment_name")),
@@ -1538,6 +1661,7 @@ def write_missed_assessments(
         "Student No",
         "Student",
         "Email",
+        *STUDENT_CONTACT_HEADERS,
         "Module Code",
         "Module",
         "Assessment",
@@ -1554,6 +1678,7 @@ def write_missed_assessments(
         ("Student No", ("student_no",)),
         ("Student", ("student",)),
         ("Email", ("email",)),
+        *STUDENT_CONTACT_FIELD_MAP,
         ("Module Code", ("module_code",)),
         ("Module", ("module",)),
         ("Assessment", ("assessment",)),
@@ -1592,7 +1717,15 @@ def write_gradebook_course_notes(
     note_columns_no_prog = [
         col for col in note_columns if str(col).lower() != "programme"
     ]
-    headers = ["Programme", *note_columns_no_prog]
+    contact_header_by_col = {
+        alias.lower(): label
+        for label, aliases in STUDENT_CONTACT_FIELD_MAP
+        for alias in aliases
+    }
+    headers = [
+        "Programme",
+        *[contact_header_by_col.get(str(col).lower(), col) for col in note_columns_no_prog],
+    ]
     write_headers(ws, headers)
     widths = [max(12, min(len(h) + 2, MAX_COLUMN_WIDTH)) for h in headers]
     sample_remaining = [COLUMN_WIDTH_SAMPLE_ROWS]

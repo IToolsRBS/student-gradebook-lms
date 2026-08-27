@@ -5,10 +5,11 @@ Filters (CLI; empty / omitted = select all for that dimension):
   category (intake), programme.
 
 Sheet:
-  Intake Summary — one row per programme with:
-    programme, active modules, students enrolled, suspended students,
-    students who have not accessed the portal, students with zero past-due
-    submissions (same rule as inactivity Never Submitted).
+  Intake Summary — one row per intake + programme with:
+    category (intake), programme, active modules, students enrolled,
+    suspended students, students who have not accessed the portal,
+    students with zero past-due submissions (same rule as inactivity
+    Never Submitted). Multiple intakes are combined into one workbook.
 
 Prints the absolute output path as the last stdout line (for future frontend wiring).
 """
@@ -57,6 +58,7 @@ from populate_inactivity_report import (
 )
 
 SUMMARY_HEADERS: list[str] = [
+    "Category (Intake)",
     "Programme",
     "Active Modules",
     "Students Enrolled",
@@ -66,14 +68,18 @@ SUMMARY_HEADERS: list[str] = [
 ]
 
 
+def _combo_key(category: str | None, programme: str | None) -> tuple[str, str]:
+    return (str(category or "").strip(), str(programme or "").strip().upper())
+
+
 def _active_modules_by_programme(
     conn: duckdb.DuckDBPyConnection,
     schema: str,
     *,
     category_names: Sequence[str],
     programme_codes: Sequence[str],
-) -> dict[str, int]:
-    """Count modules per programme from module summary (fallback: programme summary)."""
+) -> dict[tuple[str, str], int]:
+    """Count modules per intake + programme from module summary (fallback: programme summary)."""
     # Prefer counting distinct modules in gradebook_module_summary.
     try:
         mart_cols = _mart_columns(conn, schema, TABLE_MODULE)
@@ -87,6 +93,7 @@ def _active_modules_by_programme(
         module_col = _pick_first_mart_column(
             mart_cols, ("module_code", "course_shortname", "module")
         )
+        category_col = _pick_first_mart_column(mart_cols, ("category_name",))
         if programme_col and module_col:
             where_parts, params = _student_dimension_where(
                 mart_cols,
@@ -97,20 +104,26 @@ def _active_modules_by_programme(
             # category/programme filters with the same helper column names.
             base_where = " AND ".join(where_parts) if where_parts else "1=1"
             relation = qualified_relation(schema, TABLE_MODULE)
+            category_select = (
+                f'TRIM(CAST("{category_col}" AS VARCHAR)) AS category_name,'
+                if category_col
+                else "'' AS category_name,"
+            )
             query = f"""
                 SELECT
+                    {category_select}
                     UPPER(TRIM(CAST("{programme_col}" AS VARCHAR))) AS programme,
                     COUNT(DISTINCT TRIM(CAST("{module_col}" AS VARCHAR))) AS active_modules
                 FROM {relation}
                 WHERE {base_where}
                   AND TRIM(CAST("{module_col}" AS VARCHAR)) <> ''
-                GROUP BY 1
+                GROUP BY 1, 2
             """
             try:
                 rows = conn.execute(query, params).fetchall()
                 return {
-                    str(prog or "").strip().upper(): int(count or 0)
-                    for prog, count in rows
+                    _combo_key(cat, prog): int(count or 0)
+                    for cat, prog, count in rows
                     if str(prog or "").strip()
                 }
             except Exception:
@@ -127,6 +140,7 @@ def _active_modules_by_programme(
     active_col = _pick_first_mart_column(
         prog_cols, ("active_modules", "modules", "module_count")
     )
+    category_col = _pick_first_mart_column(prog_cols, ("category_name",))
     if not programme_col or not active_col:
         return {}
     where_parts, params = _student_dimension_where(
@@ -136,21 +150,27 @@ def _active_modules_by_programme(
     )
     base_where = " AND ".join(where_parts) if where_parts else "1=1"
     relation = qualified_relation(schema, TABLE_PROGRAMME)
+    category_select = (
+        f'TRIM(CAST("{category_col}" AS VARCHAR)) AS category_name,'
+        if category_col
+        else "'' AS category_name,"
+    )
     query = f"""
         SELECT
+            {category_select}
             UPPER(TRIM(CAST("{programme_col}" AS VARCHAR))) AS programme,
             MAX(TRY_CAST("{active_col}" AS DOUBLE)) AS active_modules
         FROM {relation}
         WHERE {base_where}
-        GROUP BY 1
+        GROUP BY 1, 2
     """
     try:
         rows = conn.execute(query, params).fetchall()
     except Exception:
         return {}
     return {
-        str(prog or "").strip().upper(): int(count or 0)
-        for prog, count in rows
+        _combo_key(cat, prog): int(count or 0)
+        for cat, prog, count in rows
         if str(prog or "").strip()
     }
 
@@ -180,6 +200,7 @@ def write_intake_summary(
         finish_sheet(ws, SUMMARY_HEADERS, 0, widths)
         return 0
 
+    category_col = _pick_first_mart_column(student_cols, ("category_name",))
     never_accessed = _inactivity_predicate_sql(student_cols, "never")
     zero_submissions = _never_submitted_predicate(conn, schema, student_cols)
     status_col = _pick_first_mart_column(student_cols, ("status",))
@@ -213,19 +234,31 @@ def write_intake_summary(
             f"= 'suspended' THEN 1 ELSE 0 END)"
         )
 
+    category_expr = (
+        f'TRIM(CAST(s."{category_col}" AS VARCHAR))'
+        if category_col
+        else "''"
+    )
+    programme_expr = f's."{programme_col}"'
     select_parts = [
-        f's."{programme_col}" AS programme',
+        f"{category_expr} AS category_name",
+        f"{programme_expr} AS programme",
         "COUNT(*) AS students_enrolled",
         f"{suspended_expr} AS suspended_students",
         f"{never_accessed_expr} AS not_accessed",
         f"{zero_sub_expr} AS zero_submissions",
     ]
+    group_sql = (
+        f"{category_expr}, {programme_expr}"
+        if category_col
+        else programme_expr
+    )
     query = f"""
         SELECT {', '.join(select_parts)}
         FROM {relation} AS s
         WHERE {base_where}
-        GROUP BY s."{programme_col}"
-        ORDER BY s."{programme_col}"
+        GROUP BY {group_sql}
+        ORDER BY {group_sql}
     """
 
     active_modules = _active_modules_by_programme(
@@ -244,8 +277,8 @@ def write_intake_summary(
             SELECT {', '.join(select_parts)}
             FROM {relation} AS s
             WHERE {base_where}
-            GROUP BY s."{programme_col}"
-            ORDER BY s."{programme_col}"
+            GROUP BY {group_sql}
+            ORDER BY {group_sql}
         """
         dim_params = _student_dimension_where(
             student_cols,
@@ -262,6 +295,7 @@ def write_intake_summary(
             break
         for tup in batch:
             row = normalize_row(dict(zip(columns, tup)))
+            category = str(pick(row, "category_name") or "").strip()
             programme = str(pick(row, "programme") or "").strip().upper()
             suspended = pick(row, "suspended_students")
             if suspended == "" or suspended is None:
@@ -269,11 +303,12 @@ def write_intake_summary(
                     conn,
                     schema,
                     [programme] if programme else programme_codes,
-                    category_names[0] if len(category_names) == 1 else None,
+                    category or (category_names[0] if len(category_names) == 1 else None),
                 )
             values = [
+                format_cell(category),
                 format_cell(pick(row, "programme")),
-                format_cell(active_modules.get(programme, 0)),
+                format_cell(active_modules.get(_combo_key(category, programme), 0)),
                 format_cell(pick(row, "students_enrolled")),
                 format_cell(suspended if suspended != "" else 0),
                 format_cell(pick(row, "not_accessed")),

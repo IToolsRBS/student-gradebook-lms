@@ -13,17 +13,74 @@ const STAGE_PROGRESS = {
   error: 100
 };
 
-function initCustomDropdown(dropdownEl, placeholder) {
+function deriveEntityLabel(placeholder) {
+  const match = String(placeholder || "").match(/select\s+(\w+)/i);
+  return match ? match[1].toLowerCase() : "item";
+}
+
+function pluralEntityLabel(entityLabel) {
+  return entityLabel.endsWith("s") ? entityLabel : `${entityLabel}s`;
+}
+
+function initMultiSelectDropdown(dropdownEl, placeholder, config = {}) {
   const trigger = dropdownEl.querySelector(".dropdown-trigger");
   const valueEl = dropdownEl.querySelector(".dropdown-value");
   const menu = dropdownEl.querySelector(".dropdown-menu");
   const searchInput = dropdownEl.querySelector(".dropdown-search");
-  let options = [{ value: "", label: placeholder }];
+  let options = [];
   let filteredOptions = options;
-  let selectedValue = "";
+  let selectedValues = new Set();
   let onSelect = null;
   let loading = false;
   let disabled = false;
+  let entityLabel = config.entityLabel || deriveEntityLabel(placeholder);
+  const pluralLabel = () => pluralEntityLabel(entityLabel);
+
+  function selectableOptions() {
+    return options.filter((option) => option.value);
+  }
+
+  function formatTriggerLabel() {
+    const selected = selectableOptions().filter((option) =>
+      selectedValues.has(option.value)
+    );
+    if (!selected.length) return placeholder;
+    if (selected.length === 1) return selected[0].label;
+    const plural = pluralLabel();
+    if (selected.length === selectableOptions().length) {
+      return `All ${plural} (${selected.length})`;
+    }
+    return `${selected.length} ${plural} selected`;
+  }
+
+  function updateTrigger() {
+    valueEl.textContent = formatTriggerLabel();
+  }
+
+  function notifyChange() {
+    if (typeof onSelect === "function") {
+      onSelect(getValues());
+    }
+  }
+
+  function toggleValue(value) {
+    if (!value) return;
+    if (selectedValues.has(value)) selectedValues.delete(value);
+    else selectedValues.add(value);
+    updateTrigger();
+    renderOptions();
+    notifyChange();
+  }
+
+  function setAllSelected(selectAll) {
+    selectedValues = new Set();
+    if (selectAll) {
+      selectableOptions().forEach((option) => selectedValues.add(option.value));
+    }
+    updateTrigger();
+    renderOptions();
+    notifyChange();
+  }
 
   function close() {
     if (disabled) return;
@@ -31,6 +88,7 @@ function initCustomDropdown(dropdownEl, placeholder) {
     trigger?.setAttribute("aria-expanded", "false");
     if (searchInput) searchInput.value = "";
     filteredOptions = options;
+    renderOptions();
   }
 
   function renderOptions() {
@@ -39,10 +97,54 @@ function initCustomDropdown(dropdownEl, placeholder) {
     if (loading) {
       const item = document.createElement("li");
       item.className = "dropdown-option loading";
-      item.textContent = "Loading categories...";
+      item.textContent = `Loading ${pluralLabel()}...`;
       menu.appendChild(item);
       return;
     }
+    if (!options.length) {
+      const item = document.createElement("li");
+      item.className = "dropdown-option empty";
+      item.textContent = `No ${pluralLabel()} available`;
+      menu.appendChild(item);
+      return;
+    }
+
+    const selectable = selectableOptions();
+    if (selectable.length) {
+      const allSelected =
+        selectable.length > 0 &&
+        selectable.every((option) => selectedValues.has(option.value));
+      const action = document.createElement("li");
+      action.className = "dropdown-option action-row";
+      action.setAttribute("role", "option");
+      const actionRow = document.createElement("div");
+      actionRow.className = "dropdown-option-row";
+      const actionCheckbox = document.createElement("input");
+      actionCheckbox.type = "checkbox";
+      actionCheckbox.className = "dropdown-checkbox";
+      actionCheckbox.checked = allSelected;
+      actionCheckbox.indeterminate =
+        !allSelected &&
+        selectable.some((option) => selectedValues.has(option.value));
+      actionCheckbox.addEventListener("click", (event) => {
+        event.stopPropagation();
+      });
+      actionCheckbox.addEventListener("change", () => {
+        setAllSelected(actionCheckbox.checked);
+      });
+      const actionLabel = document.createElement("span");
+      actionLabel.className = "dropdown-option-label";
+      actionLabel.textContent = allSelected ? "Clear all" : "Select all";
+      actionRow.appendChild(actionCheckbox);
+      actionRow.appendChild(actionLabel);
+      action.appendChild(actionRow);
+      action.addEventListener("click", (event) => {
+        event.preventDefault();
+        setAllSelected(!allSelected);
+      });
+      menu.appendChild(action);
+    }
+
     if (!filteredOptions.length) {
       const item = document.createElement("li");
       item.className = "dropdown-option empty";
@@ -50,31 +152,53 @@ function initCustomDropdown(dropdownEl, placeholder) {
       menu.appendChild(item);
       return;
     }
+
     filteredOptions.forEach((option) => {
+      if (!option.value) return;
       const item = document.createElement("li");
+      const isSelected = selectedValues.has(option.value);
       item.className = "dropdown-option";
-      if (option.value === selectedValue) item.classList.add("selected");
+      if (isSelected) item.classList.add("selected");
       item.setAttribute("role", "option");
-      item.setAttribute(
-        "aria-selected",
-        option.value === selectedValue ? "true" : "false"
-      );
-      item.textContent = option.label;
-      item.addEventListener("click", () => {
-        selectedValue = option.value;
-        valueEl.textContent = option.label;
-        renderOptions();
-        close();
-        if (typeof onSelect === "function") onSelect(option);
+      item.setAttribute("aria-selected", isSelected ? "true" : "false");
+
+      const row = document.createElement("div");
+      row.className = "dropdown-option-row";
+      const checkbox = document.createElement("input");
+      checkbox.type = "checkbox";
+      checkbox.className = "dropdown-checkbox";
+      checkbox.checked = isSelected;
+      checkbox.addEventListener("click", (event) => {
+        event.stopPropagation();
+      });
+      checkbox.addEventListener("change", () => {
+        toggleValue(option.value);
+      });
+      const label = document.createElement("span");
+      label.className = "dropdown-option-label";
+      label.textContent = option.label;
+      row.appendChild(checkbox);
+      row.appendChild(label);
+      item.appendChild(row);
+      item.addEventListener("click", (event) => {
+        event.preventDefault();
+        toggleValue(option.value);
       });
       menu.appendChild(item);
     });
+  }
+
+  function getValues() {
+    return selectableOptions()
+      .filter((option) => selectedValues.has(option.value))
+      .map((option) => option.value);
   }
 
   trigger?.addEventListener("click", () => {
     if (disabled) return;
     const isOpen = dropdownEl.classList.contains("open");
     document.querySelectorAll(".custom-dropdown.open").forEach((openEl) => {
+      if (openEl === dropdownEl) return;
       openEl.classList.remove("open");
       const openTrigger = openEl.querySelector(".dropdown-trigger");
       openTrigger?.setAttribute("aria-expanded", "false");
@@ -83,6 +207,7 @@ function initCustomDropdown(dropdownEl, placeholder) {
       dropdownEl.classList.add("open");
       trigger.setAttribute("aria-expanded", "true");
       if (searchInput) searchInput.focus();
+      renderOptions();
     } else {
       close();
     }
@@ -99,10 +224,9 @@ function initCustomDropdown(dropdownEl, placeholder) {
   searchInput?.addEventListener("input", () => {
     if (disabled) return;
     const term = searchInput.value.trim().toLowerCase();
-    filteredOptions = options.filter((option) => {
-      if (!option.value) return true;
-      return option.label.toLowerCase().includes(term);
-    });
+    filteredOptions = options.filter((option) =>
+      option.label.toLowerCase().includes(term)
+    );
     renderOptions();
   });
 
@@ -111,10 +235,14 @@ function initCustomDropdown(dropdownEl, placeholder) {
 
   return {
     setOptions(nextOptions, nextPlaceholder = placeholder) {
-      options = [{ value: "", label: nextPlaceholder }, ...(nextOptions || [])];
+      options = [...(nextOptions || [])];
       filteredOptions = options;
-      selectedValue = "";
-      valueEl.textContent = nextPlaceholder;
+      selectedValues = new Set();
+      placeholder = nextPlaceholder;
+      if (!config.entityLabel) {
+        entityLabel = deriveEntityLabel(placeholder);
+      }
+      valueEl.textContent = placeholder;
       loading = false;
       renderOptions();
     },
@@ -123,11 +251,23 @@ function initCustomDropdown(dropdownEl, placeholder) {
       dropdownEl.classList.toggle("loading", loading);
       renderOptions();
     },
+    setDisabled(isDisabled) {
+      disabled = Boolean(isDisabled);
+      dropdownEl.classList.toggle("disabled", disabled);
+      if (disabled) {
+        selectedValues = new Set();
+        valueEl.textContent = placeholder;
+        close();
+      }
+      renderOptions();
+    },
     onChange(handler) {
       onSelect = handler;
     },
+    getValues,
     getValue() {
-      return selectedValue;
+      const values = getValues();
+      return values.length === 1 ? values[0] : "";
     }
   };
 }
@@ -182,7 +322,7 @@ async function loadCategories(categoryDropdown) {
         value: c.category_name,
         label: c.category_name
       })),
-      "Select category"
+      "Select intake(s)"
     );
   } finally {
     categoryDropdown.setLoading(false);
@@ -193,29 +333,34 @@ startClock();
 loadSignedInUser();
 
 const categoryDropdownEl = document.querySelector('[data-dropdown="category"]');
-const categoryDropdown = initCustomDropdown(
+const categoryDropdown = initMultiSelectDropdown(
   categoryDropdownEl,
-  "Select category"
+  "Select intake(s)",
+  { entityLabel: "intake" }
 );
 
 loadCategories(categoryDropdown).catch((error) => {
-  window.alert(`Could not load categories: ${error.message}`);
+  window.alert(`Could not load intakes: ${error.message}`);
 });
 
 exportBtn?.addEventListener("click", async () => {
-  const categoryName = categoryDropdown.getValue();
-  if (!categoryName) {
-    window.alert("Select a category (intake) first.");
+  const categoryNames = categoryDropdown.getValues();
+  if (!categoryNames.length) {
+    window.alert("Select at least one category (intake) first.");
     return;
   }
 
   const originalHtml = exportBtn.innerHTML;
   const startedAt = Date.now();
   let elapsedTicker = null;
+  const isBatch = categoryNames.length > 1;
+  const startMessage = isBatch
+    ? `Starting batch export for ${categoryNames.length} intakes...`
+    : "Starting export job...";
   exportBtn.disabled = true;
   exportBtn.textContent = "Starting...";
-  setAppBusy("Starting export job...");
-  if (exportStatusEl) exportStatusEl.textContent = "Starting export job...";
+  setAppBusy(startMessage);
+  if (exportStatusEl) exportStatusEl.textContent = startMessage;
   setProgressUi({
     visible: true,
     stage: "queued",
@@ -233,7 +378,10 @@ exportBtn?.addEventListener("click", async () => {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       credentials: "same-origin",
-      body: JSON.stringify({ categoryName })
+      body: JSON.stringify({
+        categoryNames,
+        categoryName: categoryNames.length === 1 ? categoryNames[0] : undefined
+      })
     });
     const startPayload = await readResponseJson(startResponse);
     if (!startResponse.ok || !startPayload?.jobId) {
@@ -282,9 +430,10 @@ exportBtn?.addEventListener("click", async () => {
     const downloadUrl = URL.createObjectURL(blob);
     const a = document.createElement("a");
     a.href = downloadUrl;
-    a.download =
-      latestJob?.fileName ||
-      `intake_summary_${categoryName.replace(/\s+/g, "_")}_${Date.now()}.xlsx`;
+    const fallbackName = isBatch
+      ? `intake_summary_batch_${categoryNames.length}cat_${Date.now()}.xlsx`
+      : `intake_summary_${categoryNames[0].replace(/\s+/g, "_")}_${Date.now()}.xlsx`;
+    a.download = latestJob?.fileName || fallbackName;
     document.body.appendChild(a);
     a.click();
     a.remove();

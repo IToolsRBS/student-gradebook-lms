@@ -38,12 +38,15 @@ from populate_gradebook_from_warehouse import (
     FETCH_CHUNK_SIZE,
     MAX_COLUMN_WIDTH,
     NOTE_FIELD_MAP,
+    STUDENT_CONTACT_FIELD_MAP,
+    STUDENT_CONTACT_HEADERS,
     TABLE_ASSESSMENT,
     TABLE_MODULE,
     _mart_columns,
     _pick_first_mart_column,
     _update_col_widths,
     append_data_row,
+    enrich_student_contact_query,
     finish_sheet,
     format_cell,
     normalize_row,
@@ -74,6 +77,7 @@ DETAIL_HEADERS: list[str] = [
     "Student No",
     "Student",
     "Email",
+    *STUDENT_CONTACT_HEADERS,
     "Module Code",
     "Module",
     "Assessment",
@@ -493,6 +497,8 @@ def _build_activity_filter_sql(
             query += " ORDER BY 1"
     elif not group_by_sql:
         query += " ORDER BY 1"
+    if select_sql.strip() == "*" and not group_by_sql:
+        query = enrich_student_contact_query(conn, query, mart_cols)
     return query, params
 
 
@@ -922,6 +928,7 @@ def write_submission_details(
             format_cell(pick(row, "student_no", "user_username")),
             format_cell(pick(row, "user_fullname")),
             format_cell(pick(row, "user_email")),
+            *[format_cell(pick(row, *aliases)) for _, aliases in STUDENT_CONTACT_FIELD_MAP],
             format_cell(pick(row, "course_shortname", "module_code")),
             format_cell(pick(row, "course_fullname", "module")),
             format_cell(pick(row, "assessment", "assessment_name")),
