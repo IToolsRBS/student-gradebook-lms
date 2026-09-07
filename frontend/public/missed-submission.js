@@ -17,8 +17,7 @@ const STAGE_PROGRESS = {
 
 const ASSESSMENT_TYPE_OPTIONS = [
   { value: "QUIZ", label: "Quiz" },
-  { value: "ASSIGNMENT", label: "Assignment" },
-  { value: "EXAM", label: "Exam" }
+  { value: "ASSIGNMENT", label: "Assignment" }
 ];
 
 function initCustomDropdown(dropdownEl, placeholder, { keepEmptyOption = true } = {}) {

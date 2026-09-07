@@ -316,6 +316,7 @@ def _build_dimension_where(
     modules: Sequence[str],
     assessment_types: Sequence[str],
     assessments: Sequence[str],
+    assessment_name_contains: str | None = None,
 ) -> tuple[list[str], list[Any]]:
     programme_col = _pick_first_mart_column(
         mart_cols, ("programme", "course_prefix", "program_code")
@@ -372,6 +373,12 @@ def _build_dimension_where(
                 params,
             )
         )
+    needle = str(assessment_name_contains or "").strip().lower()
+    if needle and assessment_col:
+        where_parts.append(
+            f'LOWER(TRIM(CAST("{assessment_col}" AS VARCHAR))) LIKE ?'
+        )
+        params.append(f"%{needle}%")
 
     return where_parts, params
 
@@ -389,6 +396,7 @@ def _build_activity_filter_sql(
     mark_statuses: Sequence[str] | None = None,
     due_from: str | None = None,
     due_to: str | None = None,
+    assessment_name_contains: str | None = None,
     order_columns: Sequence[str] | None = None,
     select_sql: str = "*",
     group_by_sql: str | None = None,
@@ -415,6 +423,7 @@ def _build_activity_filter_sql(
         modules=modules,
         assessment_types=assessment_types,
         assessments=assessments,
+        assessment_name_contains=assessment_name_contains,
     )
 
     due_col = _pick_first_mart_column(
@@ -515,6 +524,7 @@ def iter_filtered_assessment_rows(
     mark_statuses: Sequence[str] | None = None,
     due_from: str | None = None,
     due_to: str | None = None,
+    assessment_name_contains: str | None = None,
     order_columns: Sequence[str] | None = None,
     chunk_size: int = FETCH_CHUNK_SIZE,
 ) -> Iterator[dict[str, Any]]:
@@ -530,6 +540,7 @@ def iter_filtered_assessment_rows(
         mark_statuses=mark_statuses,
         due_from=due_from,
         due_to=due_to,
+        assessment_name_contains=assessment_name_contains,
         order_columns=order_columns,
     )
     if not built:

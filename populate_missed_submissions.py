@@ -127,6 +127,7 @@ def _build_missed_filter_sql(
     statuses: Sequence[str],
     due_from: str | None = None,
     due_to: str | None = None,
+    assessment_name_contains: str | None = None,
     order_columns: Sequence[str] | None = None,
     select_sql: str = "*",
     group_by_sql: str | None = None,
@@ -145,6 +146,7 @@ def _build_missed_filter_sql(
         modules=modules,
         assessment_types=assessment_types,
         assessments=assessments,
+        assessment_name_contains=assessment_name_contains,
     )
 
     status_col = _pick_first_mart_column(mart_cols, ("status",))
@@ -202,6 +204,7 @@ def iter_filtered_missed_rows(
     statuses: Sequence[str],
     due_from: str | None = None,
     due_to: str | None = None,
+    assessment_name_contains: str | None = None,
     order_columns: Sequence[str] | None = None,
     chunk_size: int = FETCH_CHUNK_SIZE,
 ) -> Iterator[dict[str, Any]]:
@@ -216,6 +219,7 @@ def iter_filtered_missed_rows(
         statuses=statuses,
         due_from=due_from,
         due_to=due_to,
+        assessment_name_contains=assessment_name_contains,
         order_columns=order_columns,
     )
     if not built:

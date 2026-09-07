@@ -579,6 +579,10 @@ app.get(
   }
 );
 
+app.get(["/exams", "/exams/", "/exams.html"], (_req, res) => {
+  res.sendFile(path.join(__dirname, "public", "exams.html"));
+});
+
 app.get(["/audit-log", "/audit-log/", "/audit-log.html"], (_req, res) => {
   res.sendFile(path.join(__dirname, "public", "audit-log.html"));
 });
@@ -1772,6 +1776,162 @@ app.post("/api/export-late-submissions/start", async (req, res) => {
   res.json({ ok: true, jobId });
 });
 
+app.post("/api/export-exams/start", async (req, res) => {
+  const categoryName = String(req.body?.categoryName || "").trim();
+  const programmeCodes = [
+    ...new Set(
+      (Array.isArray(req.body?.programmeCodes) ? req.body.programmeCodes : [])
+        .map((code) => String(code || "").trim().toUpperCase())
+        .filter(Boolean)
+    )
+  ];
+  const moduleCodes = [
+    ...new Set(
+      (Array.isArray(req.body?.moduleCodes) ? req.body.moduleCodes : [])
+        .map((code) => String(code || "").trim().toUpperCase())
+        .filter(Boolean)
+    )
+  ];
+
+  if (!categoryName) {
+    return res.status(400).json({ error: "categoryName is required" });
+  }
+  if (!programmeCodes.length) {
+    return res.status(400).json({ error: "At least one programme is required" });
+  }
+  if (!moduleCodes.length) {
+    return res.status(400).json({ error: "At least one module is required" });
+  }
+  if (!assertBatchProgrammeLimit(programmeCodes, res)) return;
+  if (!motherduckToken) {
+    return res.status(500).json({
+      error: "Missing MOTHERDUCK_TOKEN in environment/.env"
+    });
+  }
+
+  cleanupOldJobs();
+  const jobId = makeJobId();
+  const startedAt = Date.now();
+  registerExportJob(req, {
+    jobId,
+    status: "queued",
+    stage: "queued",
+    message: "Queued for exams export...",
+    startedAt,
+    updatedAt: startedAt,
+    categoryName,
+    programmeCodes,
+    moduleCodes,
+    reportType: "exams",
+    timingsMs: {}
+  });
+
+  (async () => {
+    try {
+      console.info(
+        `[export-job:${jobId}] report=exams category=${categoryName}`
+      );
+      updateJob(jobId, {
+        status: "running",
+        stage: "excel",
+        message: "Building Exams report..."
+      });
+
+      const heartbeat = setInterval(() => {
+        const elapsedSec = Math.round((Date.now() - startedAt) / 1000);
+        updateJob(jobId, {
+          message: `Building Exams report... (${elapsedSec}s)`
+        });
+      }, 10000);
+
+      const pythonArgs = [
+        "populate_exams.py",
+        "--category-name",
+        categoryName,
+        "--warehouse-schema",
+        warehouseSchema,
+        "--output-dir",
+        exportOutputDir
+      ];
+      for (const code of programmeCodes) {
+        pythonArgs.push("--programme-code", code);
+      }
+      for (const code of moduleCodes) {
+        pythonArgs.push("--module", code);
+      }
+
+      let exportResult;
+      try {
+        exportResult = await runProcess(
+          pythonBin,
+          pythonArgs,
+          projectRoot,
+          motherduckEnv(),
+          { logPrefix: `[export-job:${jobId}][exams]` }
+        );
+      } finally {
+        clearInterval(heartbeat);
+      }
+
+      if (exportResult.code !== 0) {
+        const logTail = exportResult.output
+          .split(/\r?\n/)
+          .map((line) => line.trim())
+          .filter(Boolean)
+          .slice(-8)
+          .join("\n");
+        return updateJob(jobId, {
+          status: "failed",
+          stage: "excel",
+          message: "Exams export failed",
+          error: logTail || "Exams export failed",
+          logs: exportResult.output
+        });
+      }
+
+      const lines = exportResult.output
+        .split(/\r?\n/)
+        .map((line) => line.trim())
+        .filter(Boolean);
+      const exportedPath = lines[lines.length - 1];
+      if (!exportedPath || !fs.existsSync(exportedPath)) {
+        return updateJob(jobId, {
+          status: "failed",
+          stage: "excel",
+          message: "Export file was not created",
+          logs: exportResult.output
+        });
+      }
+
+      const totalMs = Date.now() - startedAt;
+      updateJob(jobId, {
+        status: "done",
+        stage: "done",
+        message: "Export complete. Ready to download.",
+        filePath: exportedPath,
+        fileName: path.basename(exportedPath),
+        timingsMs: {
+          excel: exportResult.elapsedMs,
+          total: totalMs
+        }
+      });
+      console.info(
+        `[export-job:${jobId}] done excel=${exportResult.elapsedMs}ms total=${totalMs}ms`
+      );
+    } catch (error) {
+      updateJob(jobId, {
+        status: "failed",
+        message: "Unexpected export failure",
+        stage: "error",
+        error: String(error?.message || error)
+      });
+      console.error(`[export-job:${jobId}] failed`, error);
+    }
+  })();
+
+  res.json({ ok: true, jobId });
+});
+
 app.get("/api/export-excel/jobs/:jobId", (req, res) => {
   cleanupOldJobs();
   const job = exportJobs.get(String(req.params.jobId || ""));
@@ -1889,6 +2049,8 @@ app.get("*", (req, res) => {
     "/missed-submission.html": "missed-submission.html",
     "/late-submission": "late-submission.html",
     "/late-submission.html": "late-submission.html",
+    "/exams": "exams.html",
+    "/exams.html": "exams.html",
     "/audit-log": "audit-log.html",
     "/audit-log.html": "audit-log.html"
   };

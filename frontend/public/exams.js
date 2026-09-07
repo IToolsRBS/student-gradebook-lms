@@ -13,25 +13,12 @@ const STAGE_PROGRESS = {
   error: 100
 };
 
-const ASSESSMENT_TYPE_OPTIONS = [
-  { value: "QUIZ", label: "Quiz" },
-  { value: "ASSIGNMENT", label: "Assignment" }
-];
-
-const STATUS_OPTIONS = [
-  { value: "", label: "All" },
-  { value: "graded", label: "Graded" },
-  { value: "not_graded", label: "Not graded" }
-];
-
-function initCustomDropdown(dropdownEl, placeholder, { keepEmptyOption = true } = {}) {
+function initCustomDropdown(dropdownEl, placeholder) {
   const trigger = dropdownEl.querySelector(".dropdown-trigger");
   const valueEl = dropdownEl.querySelector(".dropdown-value");
   const menu = dropdownEl.querySelector(".dropdown-menu");
   const searchInput = dropdownEl.querySelector(".dropdown-search");
-  let options = keepEmptyOption
-    ? [{ value: "", label: placeholder }]
-    : [];
+  let options = [{ value: "", label: placeholder }];
   let filteredOptions = options;
   let selectedValue = "";
   let onSelect = null;
@@ -89,8 +76,9 @@ function initCustomDropdown(dropdownEl, placeholder, { keepEmptyOption = true } 
     const isOpen = dropdownEl.classList.contains("open");
     document.querySelectorAll(".custom-dropdown.open").forEach((openEl) => {
       openEl.classList.remove("open");
-      const openTrigger = openEl.querySelector(".dropdown-trigger");
-      openTrigger?.setAttribute("aria-expanded", "false");
+      openEl
+        .querySelector(".dropdown-trigger")
+        ?.setAttribute("aria-expanded", "false");
     });
     if (!isOpen) {
       dropdownEl.classList.add("open");
@@ -123,12 +111,10 @@ function initCustomDropdown(dropdownEl, placeholder, { keepEmptyOption = true } 
 
   return {
     setOptions(nextOptions, nextPlaceholder = placeholder) {
-      options = keepEmptyOption
-        ? [{ value: "", label: nextPlaceholder }, ...(nextOptions || [])]
-        : [...(nextOptions || [])];
+      options = [{ value: "", label: nextPlaceholder }, ...(nextOptions || [])];
       filteredOptions = options;
-      selectedValue = options[0]?.value ?? "";
-      valueEl.textContent = options[0]?.label || nextPlaceholder;
+      selectedValue = "";
+      valueEl.textContent = nextPlaceholder;
       loading = false;
       renderOptions();
     },
@@ -152,9 +138,6 @@ function initCustomDropdown(dropdownEl, placeholder, { keepEmptyOption = true } 
     },
     getValue() {
       return selectedValue;
-    },
-    getSelectedLabel() {
-      return options.find((o) => o.value === selectedValue)?.label || "";
     }
   };
 }
@@ -262,7 +245,6 @@ function initMultiSelectDropdown(dropdownEl, placeholder, config = {}) {
         selectable.every((option) => selectedValues.has(option.value));
       const action = document.createElement("li");
       action.className = "dropdown-option action-row";
-      action.setAttribute("role", "option");
       const actionRow = document.createElement("div");
       actionRow.className = "dropdown-option-row";
       const actionCheckbox = document.createElement("input");
@@ -272,9 +254,7 @@ function initMultiSelectDropdown(dropdownEl, placeholder, config = {}) {
       actionCheckbox.indeterminate =
         !allSelected &&
         selectable.some((option) => selectedValues.has(option.value));
-      actionCheckbox.addEventListener("click", (event) => {
-        event.stopPropagation();
-      });
+      actionCheckbox.addEventListener("click", (event) => event.stopPropagation());
       actionCheckbox.addEventListener("change", () => {
         setAllSelected(actionCheckbox.checked);
       });
@@ -305,21 +285,14 @@ function initMultiSelectDropdown(dropdownEl, placeholder, config = {}) {
       const isSelected = selectedValues.has(option.value);
       item.className = "dropdown-option";
       if (isSelected) item.classList.add("selected");
-      item.setAttribute("role", "option");
-      item.setAttribute("aria-selected", isSelected ? "true" : "false");
-
       const row = document.createElement("div");
       row.className = "dropdown-option-row";
       const checkbox = document.createElement("input");
       checkbox.type = "checkbox";
       checkbox.className = "dropdown-checkbox";
       checkbox.checked = isSelected;
-      checkbox.addEventListener("click", (event) => {
-        event.stopPropagation();
-      });
-      checkbox.addEventListener("change", () => {
-        toggleValue(option.value);
-      });
+      checkbox.addEventListener("click", (event) => event.stopPropagation());
+      checkbox.addEventListener("change", () => toggleValue(option.value));
       const label = document.createElement("span");
       label.className = "dropdown-option-label";
       label.textContent = option.label;
@@ -346,8 +319,9 @@ function initMultiSelectDropdown(dropdownEl, placeholder, config = {}) {
     document.querySelectorAll(".custom-dropdown.open").forEach((openEl) => {
       if (openEl === dropdownEl) return;
       openEl.classList.remove("open");
-      const openTrigger = openEl.querySelector(".dropdown-trigger");
-      openTrigger?.setAttribute("aria-expanded", "false");
+      openEl
+        .querySelector(".dropdown-trigger")
+        ?.setAttribute("aria-expanded", "false");
     });
     if (!isOpen) {
       dropdownEl.classList.add("open");
@@ -361,10 +335,6 @@ function initMultiSelectDropdown(dropdownEl, placeholder, config = {}) {
 
   document.addEventListener("click", (event) => {
     if (!dropdownEl.contains(event.target)) close();
-  });
-
-  document.addEventListener("keydown", (event) => {
-    if (event.key === "Escape") close();
   });
 
   searchInput?.addEventListener("input", () => {
@@ -513,79 +483,10 @@ async function loadModules(moduleDropdown, categoryName, programmeCodes) {
   }
 }
 
-async function loadAssessments(
-  assessmentDropdown,
-  { categoryName, programmeCodes, moduleCodes, assessmentTypes }
-) {
-  const params = new URLSearchParams({
-    categoryName,
-    programmeCodes: programmeCodes.join(",")
-  });
-  if (moduleCodes.length) {
-    params.set("moduleCodes", moduleCodes.join(","));
-  }
-  if (assessmentTypes.length) {
-    params.set("assessmentTypes", assessmentTypes.join(","));
-  }
-  const assessments = await fetchJson(`/api/assessments?${params}`);
-  assessmentDropdown.setOptions(
-    assessments.map((item) => {
-      const name = item.assessment || item.name;
-      return { value: name, label: name };
-    }),
-    "Select assessment(s)"
-  );
-}
-
-function resetProgrammes(programmeDropdown) {
-  programmeDropdown.setDisabled(true);
-  programmeDropdown.setOptions([], "Select programme(s)");
-}
-
 function resetModules(moduleDropdown, hintEl) {
   moduleDropdown.setDisabled(true);
   moduleDropdown.setOptions([], "Select module(s)");
   if (hintEl) hintEl.hidden = false;
-}
-
-function resetAssessmentTypes(assessmentTypeDropdown) {
-  assessmentTypeDropdown.setDisabled(true);
-  assessmentTypeDropdown.setOptions([], "Select assessment type(s)");
-}
-
-function resetAssessments(assessmentDropdown) {
-  assessmentDropdown.setDisabled(true);
-  assessmentDropdown.setOptions([], "Select assessment(s)");
-}
-
-async function refreshAssessments(
-  assessmentDropdown,
-  categoryDropdown,
-  programmeDropdown,
-  moduleDropdown,
-  assessmentTypeDropdown
-) {
-  const categoryName = categoryDropdown.getValue();
-  const programmeCodes = programmeDropdown.getValues();
-  if (!categoryName || !programmeCodes.length) {
-    resetAssessments(assessmentDropdown);
-    return;
-  }
-  assessmentDropdown.setDisabled(false);
-  assessmentDropdown.setLoading(true);
-  try {
-    await loadAssessments(assessmentDropdown, {
-      categoryName,
-      programmeCodes,
-      moduleCodes: moduleDropdown.getValues(),
-      assessmentTypes: assessmentTypeDropdown.getValues()
-    });
-  } catch (error) {
-    resetAssessments(assessmentDropdown);
-    console.error(error);
-  } finally {
-    assessmentDropdown.setLoading(false);
-  }
 }
 
 startClock();
@@ -605,35 +506,18 @@ const moduleDropdown = initMultiSelectDropdown(
   "Select module(s)",
   { entityLabel: "module" }
 );
-const assessmentTypeDropdown = initMultiSelectDropdown(
-  document.querySelector('[data-dropdown="assessmentType"]'),
-  "Select assessment type(s)",
-  { entityLabel: "assessment type" }
-);
-const assessmentDropdown = initMultiSelectDropdown(
-  document.querySelector('[data-dropdown="assessment"]'),
-  "Select assessment(s)",
-  { entityLabel: "assessment" }
-);
-const statusDropdown = initCustomDropdown(
-  document.querySelector('[data-dropdown="status"]'),
-  "All",
-  { keepEmptyOption: false }
-);
 const moduleHintEl = document.getElementById("moduleHint");
 
 programmeDropdown.setDisabled(true);
 moduleDropdown.setDisabled(true);
-assessmentTypeDropdown.setDisabled(true);
-assessmentDropdown.setDisabled(true);
-statusDropdown.setOptions(STATUS_OPTIONS);
 
 categoryDropdown.onChange(async (option) => {
-  resetProgrammes(programmeDropdown);
   resetModules(moduleDropdown, moduleHintEl);
-  resetAssessmentTypes(assessmentTypeDropdown);
-  resetAssessments(assessmentDropdown);
-  if (!option.value) return;
+  if (!option.value) {
+    programmeDropdown.setDisabled(true);
+    programmeDropdown.setOptions([], "Select programme(s)");
+    return;
+  }
   programmeDropdown.setDisabled(false);
   await loadProgrammes(programmeDropdown, option.value);
 });
@@ -643,53 +527,18 @@ programmeDropdown.onChange(async (programmeCodes) => {
   const codes = Array.isArray(programmeCodes)
     ? programmeCodes
     : programmeDropdown.getValues();
-  resetModules(moduleDropdown, moduleHintEl);
-  resetAssessments(assessmentDropdown);
   if (!categoryName || !codes.length) {
-    resetAssessmentTypes(assessmentTypeDropdown);
+    resetModules(moduleDropdown, moduleHintEl);
     return;
   }
   moduleDropdown.setDisabled(false);
   if (moduleHintEl) moduleHintEl.hidden = true;
-  assessmentTypeDropdown.setDisabled(false);
-  assessmentTypeDropdown.setOptions(
-    ASSESSMENT_TYPE_OPTIONS,
-    "Select assessment type(s)"
-  );
-  assessmentDropdown.setDisabled(false);
   try {
     await loadModules(moduleDropdown, categoryName, codes);
   } catch (error) {
     resetModules(moduleDropdown, moduleHintEl);
     window.alert(`Could not load modules: ${error.message}`);
   }
-  await refreshAssessments(
-    assessmentDropdown,
-    categoryDropdown,
-    programmeDropdown,
-    moduleDropdown,
-    assessmentTypeDropdown
-  );
-});
-
-moduleDropdown.onChange(async () => {
-  await refreshAssessments(
-    assessmentDropdown,
-    categoryDropdown,
-    programmeDropdown,
-    moduleDropdown,
-    assessmentTypeDropdown
-  );
-});
-
-assessmentTypeDropdown.onChange(async () => {
-  await refreshAssessments(
-    assessmentDropdown,
-    categoryDropdown,
-    programmeDropdown,
-    moduleDropdown,
-    assessmentTypeDropdown
-  );
 });
 
 loadCategories(categoryDropdown).catch((error) => {
@@ -700,9 +549,6 @@ exportBtn?.addEventListener("click", async () => {
   const categoryName = categoryDropdown.getValue();
   const programmeCodes = programmeDropdown.getValues();
   const moduleCodes = moduleDropdown.getValues();
-  const assessmentTypes = assessmentTypeDropdown.getValues();
-  const assessments = assessmentDropdown.getValues();
-  const status = statusDropdown.getValue();
 
   if (!categoryName) {
     window.alert("Select a category (intake) first.");
@@ -710,6 +556,10 @@ exportBtn?.addEventListener("click", async () => {
   }
   if (!programmeCodes.length) {
     window.alert("Select at least one programme.");
+    return;
+  }
+  if (!moduleCodes.length) {
+    window.alert("Select at least one module.");
     return;
   }
 
@@ -733,17 +583,14 @@ exportBtn?.addEventListener("click", async () => {
   }, 1000);
 
   try {
-    const startResponse = await fetch("/api/export-activity-completion/start", {
+    const startResponse = await fetch("/api/export-exams/start", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       credentials: "same-origin",
       body: JSON.stringify({
         categoryName,
         programmeCodes,
-        moduleCodes,
-        assessmentTypes,
-        assessments,
-        statuses: status ? [status] : []
+        moduleCodes
       })
     });
     const startPayload = await readResponseJson(startResponse);
@@ -795,7 +642,7 @@ exportBtn?.addEventListener("click", async () => {
     a.href = downloadUrl;
     a.download =
       latestJob?.fileName ||
-      `activity_completion_${categoryName.replace(/\s+/g, "_")}_${Date.now()}.xlsx`;
+      `exams_${categoryName.replace(/\s+/g, "_")}_${Date.now()}.xlsx`;
     document.body.appendChild(a);
     a.click();
     a.remove();
@@ -838,8 +685,6 @@ exportBtn?.addEventListener("click", async () => {
     clearAppBusy();
     exportBtn.disabled = false;
     exportBtn.innerHTML = originalHtml;
-    setTimeout(() => {
-      hideProgressUi();
-    }, 5000);
+    setTimeout(() => hideProgressUi(), 5000);
   }
 });

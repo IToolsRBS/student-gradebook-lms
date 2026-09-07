@@ -364,6 +364,17 @@ body {
 
 .report-cell:nth-child(6) {
   animation-delay: 0.5s;
+  grid-column: 1;
+  grid-row: 3;
+  border-bottom: none;
+}
+
+.report-cell:nth-child(7) {
+  animation-delay: 0.56s;
+  grid-column: 2 / -1;
+  grid-row: 3;
+  border-right: none;
+  border-bottom: none;
 }
 
 .report-cell-featured {
@@ -402,7 +413,8 @@ body {
 }
 
 .report-cell:nth-child(3),
-.report-cell:nth-child(5) {
+.report-cell:nth-child(5),
+.report-cell:nth-child(7) {
   border-right: none;
 }
 

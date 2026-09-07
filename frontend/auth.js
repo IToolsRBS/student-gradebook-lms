@@ -23,6 +23,7 @@ export const ALL_FEATURES = [
   "inactivity-report",
   "missed-submission",
   "late-submission",
+  "exams",
   "audit-log"
 ];
 
@@ -56,6 +57,8 @@ export const PATH_FEATURES = {
   "/missed-submission.html": "missed-submission",
   "/late-submission": "late-submission",
   "/late-submission.html": "late-submission",
+  "/exams": "exams",
+  "/exams.html": "exams",
   "/audit-log": "audit-log",
   "/audit-log.html": "audit-log"
 };
@@ -68,6 +71,7 @@ export const API_FEATURES = {
   "/api/export-inactivity-report/start": "inactivity-report",
   "/api/export-missed-submissions/start": "missed-submission",
   "/api/export-late-submissions/start": "late-submission",
+  "/api/export-exams/start": "exams",
   "/api/audit-log": "audit-log",
   "/api/audit-log/export": "audit-log"
 };
