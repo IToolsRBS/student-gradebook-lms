@@ -558,10 +558,6 @@ exportBtn?.addEventListener("click", async () => {
     window.alert("Select at least one programme.");
     return;
   }
-  if (!moduleCodes.length) {
-    window.alert("Select at least one module.");
-    return;
-  }
 
   const originalHtml = exportBtn.innerHTML;
   const startedAt = Date.now();

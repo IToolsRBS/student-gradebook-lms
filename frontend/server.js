@@ -1799,9 +1799,6 @@ app.post("/api/export-exams/start", async (req, res) => {
   if (!programmeCodes.length) {
     return res.status(400).json({ error: "At least one programme is required" });
   }
-  if (!moduleCodes.length) {
-    return res.status(400).json({ error: "At least one module is required" });
-  }
   if (!assertBatchProgrammeLimit(programmeCodes, res)) return;
   if (!motherduckToken) {
     return res.status(500).json({

@@ -1,7 +1,7 @@
 """
 Build Exams export workbook from warehouse gradebook marts.
 
-Filters: category (intake), programme, module.
+Filters: category (intake), programme, optional module.
 Always limited to assessments whose name contains "exam" (case-insensitive),
 which also matches "examination". Includes all statuses (submitted, late,
 missed, graded).
